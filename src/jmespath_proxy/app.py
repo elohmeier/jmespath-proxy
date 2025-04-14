@@ -1,12 +1,14 @@
 import os
 import pathlib
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
-import httpx
 import jmespath
+from httpx import AsyncClient, HTTPError
 from jmespath.exceptions import ParseError
-from litestar import Litestar, get, post
+from litestar import Litestar, get, post, status_codes
 from litestar.connection import Request
 from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.logging import LoggingConfig
@@ -15,6 +17,30 @@ from litestar.static_files.config import create_static_files_router
 from litestar.template import TemplateConfig
 
 JMESPATH_EXPRESSION = os.environ.get("JMESPATH_EXPRESSION", default="")
+FORWARD_URL = os.environ.get("FORWARD_URL", default="")
+
+# Default timeout in seconds for httpx requests
+HTTPX_TIMEOUT = float(os.environ.get("HTTPX_TIMEOUT", default="30.0"))
+
+
+@asynccontextmanager
+async def httpx_lifespan(app: Litestar) -> AsyncGenerator[None]:
+    """Lifespan context manager for httpx client.
+
+    Creates a single httpx client when the application starts and stores it in app.state.
+    The client is automatically closed when the application shuts down.
+
+    Args:
+        app: The Litestar application instance
+
+    Yields:
+        None
+    """
+    app.state.httpx_client = AsyncClient(timeout=HTTPX_TIMEOUT)
+    try:
+        yield
+    finally:
+        await app.state.httpx_client.aclose()
 
 
 @get("/")
@@ -24,14 +50,45 @@ async def index() -> Template:
     )
 
 
-@post(path="/forward")
+@post(path="/forward", status_code=status_codes.HTTP_200_OK)
 async def forward_json(data: dict[str, Any], request: Request) -> Any:
     request.logger.info(f"Forward endpoint received data: {data}")
 
-    if not JMESPATH_EXPRESSION:
-        return data
+    # Apply JMESPath transformation if configured
+    if JMESPATH_EXPRESSION:
+        result = jmespath.search(JMESPATH_EXPRESSION, data)
+    else:
+        result = data
 
-    result = jmespath.search(JMESPATH_EXPRESSION, data)
+    request.logger.info(f"Transformed payload: {result}")
+
+    # Raise an error if no FORWARD_URL is specified
+    if not FORWARD_URL:
+        request.logger.error("No FORWARD_URL environment variable specified")
+        return {
+            "error": "Configuration error: FORWARD_URL environment variable is not set",
+            "original_data": result,
+        }
+
+    # Forward to remote system
+    try:
+        client = request.app.state.httpx_client
+
+        if TYPE_CHECKING:
+            client = cast(AsyncClient, client)
+
+        response = await client.post(FORWARD_URL, json=result)
+        response.raise_for_status()
+        request.logger.info(
+            f"Successfully forwarded to {FORWARD_URL}, status: {response.status_code}"
+        )
+        return response.json()
+    except HTTPError as e:
+        request.logger.error(f"Error forwarding to {FORWARD_URL}: {str(e)}")
+        return {
+            "error": f"Failed to forward request: {str(e)}",
+            "original_data": result,
+        }
 
 
 @dataclass
@@ -40,7 +97,7 @@ class JMESPathTestPayload:
     expression: str | None = None
 
 
-@post(path="/test")
+@post(path="/test", status_code=status_codes.HTTP_200_OK)
 async def test_jmes(data: JMESPathTestPayload, request: Request) -> Any:
     request.logger.info(f"Test endpoint received data: {data.data}")
     request.logger.info(
@@ -77,7 +134,7 @@ app = Litestar(
     logging_config=logging_config,
     route_handlers=[
         index,
-        mirror_json,
+        forward_json,
         test_jmes,
         create_static_files_router(path="/static", directories=["static"]),
     ],
@@ -85,4 +142,5 @@ app = Litestar(
         directory=pathlib.Path("templates"),
         engine=JinjaTemplateEngine,
     ),
+    lifespan=[httpx_lifespan],
 )
