@@ -10,12 +10,15 @@ dependencies = [
   "litestar[jinja,standard]>=2.15.1",
 ]
 
+[project.scripts]
+jmespath-proxy = "jmespath_proxy.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
 test = [
-    "pytest>=8.3.5",
-    "pytest-asyncio>=0.26.0",
+  "pytest>=8.3.5",
+  "pytest-asyncio>=0.26.0",
 ]
