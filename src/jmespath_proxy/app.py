@@ -16,6 +16,11 @@ from litestar.response import Template
 from litestar.static_files.config import create_static_files_router
 from litestar.template import TemplateConfig
 
+APP_DIR = pathlib.Path(__file__).parent.resolve()
+TEMPLATE_DIR = APP_DIR / "templates"
+STATIC_DIR = APP_DIR / "static"
+
+
 JMESPATH_EXPRESSION = os.environ.get("JMESPATH_EXPRESSION", default="")
 FORWARD_URL = os.environ.get("FORWARD_URL", default="")
 
@@ -136,11 +141,8 @@ app = Litestar(
         index,
         forward_json,
         test_jmes,
-        create_static_files_router(path="/static", directories=["static"]),
+        create_static_files_router(path="/static", directories=[STATIC_DIR]),
     ],
-    template_config=TemplateConfig(
-        directory=pathlib.Path("templates"),
-        engine=JinjaTemplateEngine,
-    ),
+    template_config=TemplateConfig(directory=TEMPLATE_DIR, engine=JinjaTemplateEngine),
     lifespan=[httpx_lifespan],
 )
