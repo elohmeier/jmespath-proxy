@@ -1,0 +1,22 @@
+repos:
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.6.14
+    hooks:
+      - id: uv-lock
+        name: Lock Python dependencies with uv
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.6
+    hooks:
+      - id: ruff
+        name: Check and fix Python code with Ruff
+        args: [--fix, --exit-zero]
+      - id: ruff-format
+        name: Format Python code with Ruff
+  - repo: local
+    hooks:
+      - id: dprint
+        name: Format files with dprint
+        entry: dprint fmt --allow-no-files
+        language: system
+        pass_filenames: false
+        files: \.(json|md|markdown|toml|dockerfile|yaml|yml)$
