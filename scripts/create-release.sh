@@ -126,20 +126,57 @@ update_pyproject_toml() {
     return 1
 }
 
+# Function to update version in Helm chart
+update_helm_chart() {
+    local chart_file="$ROOT/charts/jmespath-proxy/Chart.yaml"
+    local values_file="$ROOT/charts/jmespath-proxy/values.yaml"
+    local changes_made=0
+
+    # Update appVersion in Chart.yaml
+    local temp_file
+    temp_file=$(mktemp)
+    sed "s/^appVersion: .*/appVersion: \"$VERSION\"/" "$chart_file" >"$temp_file"
+    mv "$temp_file" "$chart_file"
+    git add "$chart_file"
+    changes_made=1
+
+    # Update image tag in values.yaml
+    temp_file=$(mktemp)
+    sed "s/^  tag: .*/  tag: \"$VERSION\"/" "$values_file" >"$temp_file"
+    mv "$temp_file" "$values_file"
+    git add "$values_file"
+    changes_made=1
+
+    echo "Updated Helm chart version to $VERSION"
+    return $changes_made
+}
+
 set -e
 
+# Update versions in files
+changes_made=0
+
 # update pyproject.toml
-if update_pyproject_toml; then
-    # No changes were made, skip commit
-    echo "Skipping commit, proceeding with tag and release"
-else
-    # Changes were made, commit them
+if ! update_pyproject_toml; then
+    changes_made=1
+fi
+
+# update Helm chart
+if ! update_helm_chart; then
+    changes_made=1
+fi
+
+# Commit changes if any were made
+if [ $changes_made -eq 1 ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
         echo "dry run, exiting"
         exit 0
     fi
 
     git commit -m "release $VERSION"
+else
+    # No changes were made, skip commit
+    echo "Skipping commit, proceeding with tag and release"
 fi
 git tag -a "$TAG" -m "release $TAG"
 
