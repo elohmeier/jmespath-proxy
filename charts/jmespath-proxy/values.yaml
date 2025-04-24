@@ -15,6 +15,10 @@ env:
   # URL to forward the transformed data to
   FORWARD_URL: ""
 
+  # Basic auth credentials for the forward URL (optional)
+  FORWARD_BASIC_AUTH_USERNAME: ""
+  FORWARD_BASIC_AUTH_PASSWORD: ""
+
   # Timeout for HTTP requests in seconds
   HTTPX_TIMEOUT: "30.0"
 
