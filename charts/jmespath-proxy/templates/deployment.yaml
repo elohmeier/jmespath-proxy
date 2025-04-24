@@ -40,6 +40,19 @@ spec:
           {{- end }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            {{- if .Values.env.JMESPATH_EXPRESSION }}
+            - name: JMESPATH_EXPRESSION
+              value: {{ .Values.env.JMESPATH_EXPRESSION | quote }}
+            {{- end }}
+            {{- if .Values.env.FORWARD_URL }}
+            - name: FORWARD_URL
+              value: {{ .Values.env.FORWARD_URL | quote }}
+            {{- end }}
+            {{- if .Values.env.HTTPX_TIMEOUT }}
+            - name: HTTPX_TIMEOUT
+              value: {{ .Values.env.HTTPX_TIMEOUT | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
