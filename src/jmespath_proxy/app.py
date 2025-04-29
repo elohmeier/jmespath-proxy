@@ -59,6 +59,12 @@ async def index() -> Template:
     )
 
 
+@post(path="/", status_code=status_codes.HTTP_200_OK)
+async def root_forward(data: dict[str, Any], request: Request) -> Any:
+    """Root POST endpoint that forwards to the same logic as /forward."""
+    return await forward_json(data, request)
+
+
 @post(path="/forward", status_code=status_codes.HTTP_200_OK)
 async def forward_json(data: dict[str, Any], request: Request) -> Any:
     request.logger.info(f"Forward endpoint received data: {data}")
@@ -152,6 +158,7 @@ app = Litestar(
     logging_config=logging_config,
     route_handlers=[
         index,
+        root_forward,
         forward_json,
         test_jmes,
         create_static_files_router(path="/static", directories=[STATIC_DIR]),
