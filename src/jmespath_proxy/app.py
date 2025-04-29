@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import jmespath
-from httpx import AsyncClient, HTTPError, BasicAuth
+from httpx import USE_CLIENT_DEFAULT, AsyncClient, BasicAuth, HTTPError
 from jmespath.exceptions import ParseError
 from litestar import Litestar, get, post, status_codes
 from litestar.connection import Request
@@ -60,12 +60,6 @@ async def index() -> Template:
 
 
 @post(path="/", status_code=status_codes.HTTP_200_OK)
-async def root_forward(data: dict[str, Any], request: Request) -> Any:
-    """Root POST endpoint that forwards to the same logic as /forward."""
-    return await forward_json(data, request)
-
-
-@post(path="/forward", status_code=status_codes.HTTP_200_OK)
 async def forward_json(data: dict[str, Any], request: Request) -> Any:
     request.logger.info(f"Forward endpoint received data: {data}")
 
@@ -93,7 +87,7 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
             client = cast(AsyncClient, client)
 
         # Set up basic auth if credentials are provided
-        auth = None
+        auth = USE_CLIENT_DEFAULT
         if FORWARD_BASIC_AUTH_USERNAME and FORWARD_BASIC_AUTH_PASSWORD:
             auth = BasicAuth(
                 username=FORWARD_BASIC_AUTH_USERNAME,
@@ -158,7 +152,6 @@ app = Litestar(
     logging_config=logging_config,
     route_handlers=[
         index,
-        root_forward,
         forward_json,
         test_jmes,
         create_static_files_router(path="/static", directories=[STATIC_DIR]),
