@@ -1,11 +1,13 @@
 import os
 import pathlib
+import ssl
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import jmespath
+import truststore
 from httpx import USE_CLIENT_DEFAULT, AsyncClient, BasicAuth, HTTPError
 from jmespath.exceptions import ParseError
 from litestar import Litestar, get, post, status_codes
@@ -27,6 +29,10 @@ FORWARD_URL = os.environ.get("FORWARD_URL", default="")
 # Default timeout in seconds for httpx requests
 HTTPX_TIMEOUT = float(os.environ.get("HTTPX_TIMEOUT", default="30.0"))
 
+# SSL verification settings
+# Set VERIFY_SSL=false to disable SSL verification (insecure)
+VERIFY_SSL = os.environ.get("VERIFY_SSL", "true").lower() != "false"
+
 # Basic auth credentials for the forward URL (optional)
 FORWARD_BASIC_AUTH_USERNAME = os.environ.get("FORWARD_BASIC_AUTH_USERNAME", default="")
 FORWARD_BASIC_AUTH_PASSWORD = os.environ.get("FORWARD_BASIC_AUTH_PASSWORD", default="")
@@ -39,13 +45,28 @@ async def httpx_lifespan(app: Litestar) -> AsyncGenerator[None]:
     Creates a single httpx client when the application starts and stores it in app.state.
     The client is automatically closed when the application shuts down.
 
+    Uses truststore for SSL verification by default, which uses the system's certificate store.
+    SSL verification can be disabled by setting VERIFY_SSL=false.
+
     Args:
         app: The Litestar application instance
 
     Yields:
         None
     """
-    app.state.httpx_client = AsyncClient(timeout=HTTPX_TIMEOUT)
+    # Configure SSL verification
+    verify: bool | ssl.SSLContext
+    if VERIFY_SSL:
+        # Use truststore to access system certificate stores
+        ssl_context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        verify = ssl_context
+    else:
+        # Disable SSL verification (insecure)
+        verify = False
+        if app.logger:
+            app.logger.warning("SSL verification is disabled. This is insecure!")
+
+    app.state.httpx_client = AsyncClient(timeout=HTTPX_TIMEOUT, verify=verify)
     try:
         yield
     finally:

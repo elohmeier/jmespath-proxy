@@ -17,6 +17,7 @@ classifiers = [
 dependencies = [
   "jmespath>=1.0.1",
   "litestar[jinja,standard]>=2.15.1",
+  "truststore>=0.10.1",
 ]
 
 [dependency-groups]
