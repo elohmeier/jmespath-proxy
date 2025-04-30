@@ -53,6 +53,10 @@ spec:
             - name: HTTPX_TIMEOUT
               value: {{ .Values.env.HTTPX_TIMEOUT | quote }}
             {{- end }}
+            {{- if .Values.env.VERIFY_SSL }}
+            - name: VERIFY_SSL
+              value: {{ .Values.env.VERIFY_SSL | quote }}
+            {{- end }}
             {{- if .Values.env.FORWARD_BASIC_AUTH_USERNAME }}
             - name: FORWARD_BASIC_AUTH_USERNAME
               value: {{ .Values.env.FORWARD_BASIC_AUTH_USERNAME | quote }}

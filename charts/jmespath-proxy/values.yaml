@@ -22,6 +22,9 @@ env:
   # Timeout for HTTP requests in seconds
   HTTPX_TIMEOUT: "30.0"
 
+  # Set to "false" to disable SSL verification (insecure)
+  # VERIFY_SSL: "true"
+
 # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1
 
