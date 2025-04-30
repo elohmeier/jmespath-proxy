@@ -80,6 +80,12 @@ async def index() -> Template:
     )
 
 
+@get("/health")
+async def health_check() -> dict[str, str]:
+    """Health check endpoint for Kubernetes probes."""
+    return {"status": "healthy"}
+
+
 @post(path="/", status_code=status_codes.HTTP_200_OK)
 async def forward_json(data: dict[str, Any], request: Request) -> Any:
     request.logger.info(f"Forward endpoint received data: {data}")
