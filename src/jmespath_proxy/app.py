@@ -10,7 +10,7 @@ import jmespath
 import truststore
 from httpx import USE_CLIENT_DEFAULT, AsyncClient, BasicAuth, HTTPError
 from jmespath.exceptions import ParseError
-from litestar import Litestar, get, post, status_codes
+from litestar import Litestar, Response, get, post, status_codes
 from litestar.connection import Request
 from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.logging import LoggingConfig
@@ -121,7 +121,13 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
         request.logger.info(
             f"Successfully forwarded to {FORWARD_URL}, status: {response.status_code}"
         )
-        return response.json()
+        # Return the response content with the original content type
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            media_type=response.headers.get("content-type"),
+            headers=dict(response.headers),
+        )
     except HTTPError as e:
         request.logger.error(f"Error forwarding to {FORWARD_URL}: {str(e)}")
         return {
