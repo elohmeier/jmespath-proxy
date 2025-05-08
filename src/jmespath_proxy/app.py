@@ -127,11 +127,22 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
         request.logger.info(
             f"Successfully forwarded to {FORWARD_URL}, status: {response.status_code}"
         )
-        # Return the response content with the original content type
+
+        # Get the content type from the response
+        content_type = response.headers.get("content-type", "")
+
+        # If the response is JSON, parse it and return the Python object
+        if "application/json" in content_type:
+            content = await response.json()
+        else:
+            # For non-JSON responses, use the raw content
+            content = response.content
+
+        # Return the response with the appropriate content and headers
         return Response(
-            content=response.content,
+            content=content,
             status_code=response.status_code,
-            media_type=response.headers.get("content-type"),
+            media_type=content_type,
             headers=dict(response.headers),
         )
     except HTTPError as e:

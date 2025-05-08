@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
-from httpx import HTTPError
+from httpx import HTTPError, USE_CLIENT_DEFAULT
 from litestar import Litestar
 from litestar.status_codes import HTTP_200_OK
 from litestar.testing import AsyncTestClient
@@ -36,9 +36,8 @@ async def test_test_jmes_endpoint_with_expression(test_client):
         "expression": "user.name",
     }
     response = await test_client.post("/test", json=test_data)
-    # Expect 200 OK now
     assert response.status_code == HTTP_200_OK
-    # Now the endpoint should correctly return "John"
+    # The endpoint returns the result as plain text when it's a string
     assert response.text == "John"
 
 
@@ -89,11 +88,11 @@ async def test_forward_json_with_jmespath_expression(test_client):
         test_data = {"user": {"name": "John", "age": 30}}
 
         # Mock the httpx client post method stored in app state
-        # Ensure the client and state are available before mocking
-        # The test_client fixture ensures the lifespan has run
         mock_post = AsyncMock()
         mock_response = AsyncMock()
         mock_response.status_code = 200
+        # Provide a dictionary for headers
+        mock_response.headers = {"content-type": "application/json"}
 
         # Ensure the mock .json() method is also an async function if needed by app code
         async def mock_json():
@@ -104,17 +103,18 @@ async def test_forward_json_with_jmespath_expression(test_client):
         mock_post.return_value = mock_response
 
         # Patch the post method on the actual client instance in the app state
-        # The path needs to point to where the AsyncClient instance actually is
-        # which the test_client makes available via its app attribute.
         with patch.object(test_client.app.state.httpx_client, "post", mock_post):
             response = await test_client.post("/", json=test_data)
 
             # Expect 200 OK now
             assert response.status_code == HTTP_200_OK
+            # The app should return the JSON content from the mock response
             assert response.json() == {"result": "success"}
 
-            # Verify the transformed data was sent
-            mock_post.assert_awaited_once_with("http://mock.example.com", json="John")
+            # Verify the transformed data was sent and auth was passed
+            mock_post.assert_awaited_once_with(
+                "http://mock.example.com", json="John", auth=USE_CLIENT_DEFAULT
+            )
 
 
 @pytest.mark.asyncio
@@ -145,5 +145,5 @@ async def test_forward_json_http_error(test_client):
             assert response.json()["original_data"] == test_data
 
             mock_post.assert_awaited_once_with(
-                "http://mock.example.com", json=test_data
+                "http://mock.example.com", json=test_data, auth=USE_CLIENT_DEFAULT
             )
