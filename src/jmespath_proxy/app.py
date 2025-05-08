@@ -17,6 +17,7 @@ from litestar.logging import LoggingConfig
 from litestar.response import Template
 from litestar.static_files.config import create_static_files_router
 from litestar.template import TemplateConfig
+from litestar.types import Logger
 
 APP_DIR = pathlib.Path(__file__).parent.resolve()
 TEMPLATE_DIR = APP_DIR / "templates"
@@ -25,6 +26,7 @@ STATIC_DIR = APP_DIR / "static"
 
 JMESPATH_EXPRESSION = os.environ.get("JMESPATH_EXPRESSION", default="")
 FORWARD_URL = os.environ.get("FORWARD_URL", default="")
+
 
 # Default timeout in seconds for httpx requests
 HTTPX_TIMEOUT = float(os.environ.get("HTTPX_TIMEOUT", default="30.0"))
@@ -36,6 +38,51 @@ VERIFY_SSL = os.environ.get("VERIFY_SSL", "true").lower() != "false"
 # Basic auth credentials for the forward URL (optional)
 FORWARD_BASIC_AUTH_USERNAME = os.environ.get("FORWARD_BASIC_AUTH_USERNAME", default="")
 FORWARD_BASIC_AUTH_PASSWORD = os.environ.get("FORWARD_BASIC_AUTH_PASSWORD", default="")
+
+
+def apply_jmespath_expression(
+    expression: str,
+    body_data: dict[str, Any],
+    query_params: dict[str, Any],
+    logger: Logger | None = None,
+) -> tuple[Any, str | None]:
+    """Apply a JMESPath expression to the provided data.
+
+    Args:
+        expression: The JMESPath expression to apply
+        body_data: The body data to transform
+        query_params: Query parameters to include in context
+        logger: Optional logger for logging messages
+
+    Returns:
+        Tuple containing:
+        - The result of the JMESPath expression (or original data on error)
+        - An error message if an error occurred, None otherwise
+    """
+    # Skip processing if no expression is provided
+    if not expression:
+        if logger:
+            logger.info("No JMESPath expression provided, returning original data.")
+        return body_data, None
+
+    # Create a combined context for JMESPath evaluation
+    context_data = {"body": body_data, "query_params": query_params}
+
+    try:
+        if logger:
+            logger.info(f"Applying JMESPath expression: {expression}")
+        result = jmespath.search(expression, context_data)
+        return result, None
+    except ParseError as e:
+        error_msg = f"JMESPath parse error: {str(e)}"
+        if logger:
+            logger.error(error_msg)
+        return body_data, error_msg
+    except Exception as e:
+        error_msg = f"JMESPath execution error: {str(e)}"
+        if logger:
+            logger.error(error_msg)
+        return body_data, error_msg
 
 
 @asynccontextmanager
@@ -90,20 +137,35 @@ async def health_check() -> dict[str, str]:
 async def forward_json(data: dict[str, Any], request: Request) -> Any:
     request.logger.info(f"Forward endpoint received data: {data}")
 
-    # Apply JMESPath transformation if configured
-    if JMESPATH_EXPRESSION:
-        result = jmespath.search(JMESPATH_EXPRESSION, data)
-    else:
-        result = data
+    # Retrieve query parameters and convert to a dictionary
+    query_params_dict = dict(request.query_params)
+    request.logger.info(f"Query parameters: {query_params_dict}")
 
-    request.logger.info(f"Transformed payload: {result}")
+    # Create a combined context for JMESPath evaluation
+    # Original data is under 'body', query params under 'query_params'
+
+    # Apply JMESPath transformation if configured
+    result, error = apply_jmespath_expression(
+        JMESPATH_EXPRESSION, data, query_params_dict, request.logger
+    )
+
+    # Return error response if transformation failed
+    if error:
+        return {
+            "error": f"Error in global expression: {error}",
+            "original_data": data,
+            "query_params": query_params_dict,
+        }
+
+    request.logger.info(f"Final payload for forwarding: {result}")
 
     # Raise an error if no FORWARD_URL is specified
     if not FORWARD_URL:
         request.logger.error("No FORWARD_URL environment variable specified")
         return {
             "error": "Configuration error: FORWARD_URL environment variable is not set",
-            "original_data": result,
+            "original_data": result,  # This 'result' might be transformed or not
+            "query_params": query_params_dict,
         }
 
     # Forward to remote system
@@ -147,9 +209,11 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
         )
     except HTTPError as e:
         request.logger.error(f"Error forwarding to {FORWARD_URL}: {str(e)}")
+        # Include query params in the error response as well
         return {
             "error": f"Failed to forward request: {str(e)}",
-            "original_data": result,
+            "original_data": result,  # This 'result' might be transformed or not
+            "query_params": query_params_dict,
         }
 
 
@@ -162,25 +226,35 @@ class JMESPathTestPayload:
 @post(path="/test", status_code=status_codes.HTTP_200_OK)
 async def test_jmes(data: JMESPathTestPayload, request: Request) -> Any:
     request.logger.info(f"Test endpoint received data: {data.data}")
-    request.logger.info(
-        f"Test endpoint using expression: {data.expression or JMESPATH_EXPRESSION}"
-    )
+
+    # Retrieve query parameters and convert to a dictionary
+    query_params_dict = dict(request.query_params)
+    request.logger.info(f"Query parameters: {query_params_dict}")
+
+    # Create a combined context for JMESPath evaluation
+    # The 'data' field from the payload is under 'body', query params under 'query_params'
 
     # Use the provided expression if available, otherwise fall back to the server default
     jmespath_expression = data.expression if data.expression else JMESPATH_EXPRESSION
 
-    # If no expression is provided (neither custom nor server default), return the original data
-    if not jmespath_expression:
-        return data.data
+    request.logger.info(
+        f"Test endpoint using expression: {jmespath_expression or '[No Expression]'}"
+    )
 
-    # Apply the JMESPath expression to the data with error handling
-    try:
-        return jmespath.search(jmespath_expression, data.data)
-    except ParseError as e:
-        error_msg = str(e)
+    # Apply the JMESPath expression
+    result, error = apply_jmespath_expression(
+        jmespath_expression, data.data, query_params_dict, request.logger
+    )
+
+    # Return error response if transformation failed
+    if error:
         return {
-            "error": f"JMESPath parse error: {error_msg}",
+            "error": error,
+            "original_data": data.data,
+            "query_params": query_params_dict,
         }
+
+    return result
 
 
 # Configure logging using Litestar's LoggingConfig

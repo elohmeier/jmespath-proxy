@@ -15,7 +15,7 @@ classifiers = [
   "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
 ]
 dependencies = [
-  "jmespath>=1.0.1",
+  "jmespath-community>=1.1.3",
   "litestar[jinja,standard]>=2.15.1",
   "truststore>=0.10.1",
 ]

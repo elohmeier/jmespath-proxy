@@ -5,6 +5,7 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
 ## Features
 
 - **JMESPath Expressions**: Apply JMESPath expressions to transform JSON data.
+- **Query Parameter Context**: Access URL query parameters within your JMESPath expressions.
 - **Forwarding**: Forward transformed JSON payloads to a configurable remote URL.
 - **Test Endpoint**: Test JMESPath expressions directly via a test endpoint.
 - **Async Support**: Built with async support using `httpx` for HTTP requests.
@@ -28,10 +29,16 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
 - **Method**: GET
 - **Description**: Serves a template with information about the JMESPath proxy application.
 
+### `/health`
+
+- **Method**: GET
+- **Description**: Health check endpoint for readiness/liveness probes.
+
 ### `/test`
 
 - **Method**: POST
-- **Description**: Accepts a JSON payload with the data and a JMESPath expression. Returns the result of the expression applied to the data.
+- **Description**: Accepts a JSON payload with the data and an optional JMESPath expression. Returns the result of applying the expression to the data within a context that includes query parameters.
+- **Query Parameters**: Any URL query parameters provided are made available in the JMESPath context.
 - **Request Body**:
   ```json
   {
@@ -39,12 +46,29 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
     "expression": "optional_jmespath_expression"
   }
   ```
+- **JMESPath Context**: When evaluating the `expression`, the JMESPath context is a dictionary with two keys:
+  - `body`: Contains the JSON data from the `data` field of the request body.
+  - `query_params`: Contains a dictionary of the parsed URL query parameters (e.g., `/test?id=123` makes `{"id": "123"}` available). Note that if a parameter appears multiple times (`?tag=a&tag=b`), only the first value is included in the `query_params` dictionary (`{"tag": "a"}`).
+- **Examples**:
+  - Request: `POST /test?user_id=987` with body `{"data": {"user": {"name": "Alice"}}}`
+  - Expression: `{"userId": query_params.user_id, "userName": body.user.name}`
+  - Result: `{"userId": "987", "userName": "Alice"}`
+  - Expression: `query_params.user_id`
+  - Result: `"987"` (returned as plain text)
 
 ### `/`
 
 - **Method**: POST
-- **Description**: Forwards incoming JSON data to the configured `FORWARD_URL` after applying the JMESPath expression. Returns the response from the forward URL.
-- **Request Body**: JSON payload to be forwarded.
+- **Description**: Accepts a JSON payload, applies the JMESPath expression configured via `JMESPATH_EXPRESSION`, and forwards the transformed result to the `FORWARD_URL`. The response from the `FORWARD_URL` is returned.
+- **Query Parameters**: Any URL query parameters provided are made available in the JMESPath context _if_ a `JMESPATH_EXPRESSION` is configured.
+- **Request Body**: The JSON payload to be processed and potentially forwarded.
+- **JMESPath Context**: When evaluating the `JMESPATH_EXPRESSION`, the JMESPath context is a dictionary with two keys:
+  - `body`: Contains the entire JSON payload from the request body.
+  - `query_params`: Contains a dictionary of the parsed URL query parameters (e.g., `/?status=new` makes `{"status": "new"}` available). As with `/test`, only the first value is used for multi-value parameters.
+- **Examples**:
+  - Request: `POST /?event_source=webhook` with body `{"order": {"id": 101, "items": [...]}}`
+  - `JMESPATH_EXPRESSION`: `{"order_id": body.order.id, "source": query_params.event_source, "item_count": length(body.order.items)}`
+  - Result forwarded to `FORWARD_URL`: `{"order_id": 101, "source": "webhook", "item_count": 3}` (assuming 3 items)
 
 ## Development and Testing
 
@@ -62,9 +86,14 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
 
 3. Use environment variables to configure the app as needed:
    ```bash
-   export JMESPATH_EXPRESSION="user.name"
-   export FORWARD_URL="http://example.com"
+   export JMESPATH_EXPRESSION='{order_id: body.id, source: query_params.channel}'
+   export FORWARD_URL="http://example.com/api/receive_order"
    ```
+   Then send a request like:
+   ```bash
+   curl -X POST "http://localhost:8000/?channel=web" -H "Content-Type: application/json" -d '{"id": 123, "value": 45.67}'
+   ```
+   The proxy would forward `{"order_id": 123, "source": "web"}` to `http://example.com/api/receive_order`.
 
 ### Running Tests
 
