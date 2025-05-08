@@ -86,6 +86,8 @@
     <h1>JMESPath Proxy</h1>
     <p>
       Enter JSON data and use JMESPath expressions to filter and transform it.
+      You can also use query parameters in your expressions via the <code
+      >query_params</code> context.
     </p>
 
     <div class="container">
@@ -99,6 +101,7 @@
               <option value="prometheus">Prometheus Alert</option>
               <option value="aws">AWS Resource</option>
               <option value="person">Person Data</option>
+              <option value="simple_order">Simple Order (for merging)</option>
             </select>
           </div>
         </div>
@@ -114,10 +117,23 @@
               <option value="">Select an expression...</option>
               <option value="basic_filter">Basic Filter</option>
               <option value="projection">Projection</option>
-              <option value="merge">Merge with New Labels</option>
-              <option value="merge_defaults">Merge (Keep Defaults)</option>
+              <option value="merge_labels_into_alerts">
+                Merge New Labels into Alerts (@ base)
+              </option>
+              <option value="merge_labels_into_alerts_body_base">
+                Merge New Labels into Alerts (body base)
+              </option>
               <option value="flatten">Flatten Arrays</option>
               <option value="pipe">Pipe Multiple Operations</option>
+              <option value="query_params_only">
+                Show Query Parameters Only
+              </option>
+              <option value="merge_body_with_params">
+                Merge Query Params into Body
+              </option>
+              <option value="construct_new_payload">
+                Construct New Payload from Body & Params
+              </option>
             </select>
           </div>
         </div>
@@ -127,14 +143,29 @@
           style="height: 60px;"
         >{{ default_expression }}</textarea>
         <div style="margin-top: 5px; font-size: 0.8em; color: #666;">
-          Examples: <code>people[?age > `30`].name</code>, <code
-          >locations[*].name</code>, <code>*.name</code>
+          Examples: <code>body.people[?age > `30`].name</code>, <code
+          >$.query_params.user_id</code>,
+          <code>{data: body.items, source: $.query_params.source}</code>,
+          <code>merge(body, $.query_params)</code>
         </div>
         <div style="margin-top: 10px; margin-bottom: 10px;">
           <label>
             <input type="checkbox" id="autoUpdateCheckbox"> Auto-update as you
             type
           </label>
+        </div>
+        <div style="margin-top: 10px; margin-bottom: 10px;">
+          <label for="queryParams">Query Parameters:</label>
+          <input
+            type="text"
+            id="queryParams"
+            placeholder="e.g., user_id=123&source=web"
+            style="width: 100%; padding: 5px;"
+          >
+          <div style="margin-top: 5px; font-size: 0.8em; color: #666;">
+            Format: <code>key1=value1&key2=value2</code> (accessible in
+            expressions as <code>query_params.key1</code>)
+          </div>
         </div>
         <button id="submitBtn">Process with JMESPath</button>
       </div>
@@ -146,260 +177,361 @@
 
     <script>
     // Example expressions
-    const expressionExamples = {
-      basic_filter: "people[?age > `30`]",
-      projection: "people[*].{name: name, city: address.city}",
-      merge: "merge(@, {alerts: alerts[*].merge(@, {labels: merge(labels, `{\"new_label_1\": \"value1\", \"source\": \"webhook_processor\"}`)})})",
-      merge_defaults: "merge(@, {alerts: alerts[*].merge(@, {labels: merge(`{\"new_label_1\": \"value1\", \"source\": \"webhook_processor\"}`, labels)})})",
-      flatten: "people[*].hobbies[]",
-      pipe: "Resources[*] | [?details.state=='running'].id"
-    };
+      const expressionExamples = {
+        basic_filter: "body.people[?age > `30`]",
+        projection: "body.people[*].{name: name, city: address.city}",
+        merge_labels_into_alerts:
+          "merge(@, { body: { alerts: body.alerts[*].merge(@, {labels: merge(labels, {\"new_label_1\": `\"value1\"`, \"source\": $.query_params.source})})}})",
+        merge_labels_into_alerts_body_base:
+          "merge(body, {alerts: body.alerts[*].merge(@, {labels: merge(labels, {\"new_label_1\": `\"value1\"`, \"source\": $.query_params.source})})})",
+        flatten: "body.people[*].hobbies[]",
+        pipe: "body.Resources[*] | [?details.state=='running'].id",
+        query_params_only: "$.query_params", // Example showing just query_params
+        merge_body_with_params: "merge(body, $.query_params)", // NEW: Merge query_params into body
+        construct_new_payload:
+          "{\"order_id\": body.id, \"source\": $.query_params.channel, \"item_count\": length(body.items)}", // NEW: Construct new object from body and params
+      };
 
-    // Example JSON data
-    const examples = {
-      prometheus: {
-        json: {
-          "receiver": "webhook",
-          "status": "firing",
-          "alerts": [
-            {
-              "status": "firing",
-              "labels": {
-                "alertname": "Test",
-                "dc": "eu-west-1",
-                "instance": "localhost:9090",
-                "job": "prometheus24"
+      // Example JSON data
+      const examples = {
+        prometheus: {
+          json: {
+            "receiver": "webhook",
+            "status": "firing",
+            "alerts": [
+              {
+                "status": "firing",
+                "labels": {
+                  "alertname": "Test",
+                  "dc": "eu-west-1",
+                  "instance": "localhost:9090",
+                  "job": "prometheus24",
+                },
+                "annotations": {
+                  "description": "some description",
+                },
+                "startsAt": "2018-08-03T09:52:26.739266876+02:00",
+                "endsAt": "0001-01-01T00:00:00Z",
+                "generatorURL":
+                  "http://example.com:9090/graph?g0.expr=go_memstats_alloc_bytes+%3E+0&g0.tab=1",
               },
-              "annotations": {
-                "description": "some description"
-              },
-              "startsAt": "2018-08-03T09:52:26.739266876+02:00",
-              "endsAt": "0001-01-01T00:00:00Z",
-              "generatorURL": "http://example.com:9090/graph?g0.expr=go_memstats_alloc_bytes+%3E+0&g0.tab=1"
-            }
-          ],
-          "groupLabels": {
-            "alertname": "Test",
-            "job": "prometheus24"
-          },
-          "commonLabels": {
-            "alertname": "Test",
-            "dc": "eu-west-1",
-            "instance": "localhost:9090",
-            "job": "prometheus24"
-          },
-          "commonAnnotations": {
-            "description": "some description"
-          },
-          "externalURL": "http://example.com:9093",
-          "version": "4",
-          "groupKey": "{}:{alertname=\"Test\", job=\"prometheus24\"}"
-        },
-        expression: "alerts[].labels"
-      },
-      aws: {
-        json: {
-          "Resources": [
-            {
-              "id": "i-1234567890abcdef0",
-              "type": "ec2",
-              "region": "us-east-1",
-              "tags": {
-                "Name": "web-server",
-                "Environment": "production"
-              },
-              "details": {
-                "instanceType": "t2.micro",
-                "state": "running",
-                "launchTime": "2023-01-15T08:30:00Z"
-              }
+            ],
+            "groupLabels": {
+              "alertname": "Test",
+              "job": "prometheus24",
             },
-            {
-              "id": "i-0987654321fedcba0",
-              "type": "ec2",
-              "region": "us-west-2",
-              "tags": {
-                "Name": "db-server",
-                "Environment": "staging"
-              },
-              "details": {
-                "instanceType": "t3.medium",
-                "state": "stopped",
-                "launchTime": "2023-02-20T14:15:00Z"
-              }
-            }
-          ]
-        },
-        expression: "Resources[?details.state=='running']"
-      },
-      person: {
-        json: {
-          "people": [
-            {
-              "name": "John Smith",
-              "age": 32,
-              "address": {
-                "city": "New York",
-                "state": "NY"
-              },
-              "hobbies": ["reading", "hiking", "photography"]
+            "commonLabels": {
+              "alertname": "Test",
+              "dc": "eu-west-1",
+              "instance": "localhost:9090",
+              "job": "prometheus24",
             },
-            {
-              "name": "Jane Doe",
-              "age": 28,
-              "address": {
-                "city": "San Francisco",
-                "state": "CA"
-              },
-              "hobbies": ["painting", "yoga", "travel"]
+            "commonAnnotations": {
+              "description": "some description",
             },
-            {
-              "name": "Bob Johnson",
-              "age": 45,
-              "address": {
-                "city": "Chicago",
-                "state": "IL"
-              },
-              "hobbies": ["cooking", "gardening", "music"]
-            }
-          ]
+            "externalURL": "http://example.com:9093",
+            "version": "4",
+            "groupKey": "{}:{alertname=\"Test\", job=\"prometheus24\"}",
+          },
+          expression: "body.alerts[].labels",
         },
-        expression: "people[?age > `30`].{name: name, city: address.city}"
-      }
-    };
+        aws: {
+          json: {
+            "Resources": [
+              {
+                "id": "i-1234567890abcdef0",
+                "type": "ec2",
+                "region": "us-east-1",
+                "tags": {
+                  "Name": "web-server",
+                  "Environment": "production",
+                },
+                "details": {
+                  "instanceType": "t2.micro",
+                  "state": "running",
+                  "launchTime": "2023-01-15T08:30:00Z",
+                },
+              },
+              {
+                "id": "i-0987654321fedcba0",
+                "type": "ec2",
+                "region": "us-west-2",
+                "tags": {
+                  "Name": "db-server",
+                  "Environment": "staging",
+                },
+                "details": {
+                  "instanceType": "t3.medium",
+                  "state": "stopped",
+                  "launchTime": "2023-02-20T14:15:00Z",
+                },
+              },
+            ],
+          },
+          expression: "body.Resources[?details.state=='running']",
+        },
+        person: {
+          json: {
+            "people": [
+              {
+                "name": "John Smith",
+                "age": 32,
+                "address": {
+                  "city": "New York",
+                  "state": "NY",
+                },
+                "hobbies": ["reading", "hiking", "photography"],
+              },
+              {
+                "name": "Jane Doe",
+                "age": 28,
+                "address": {
+                  "city": "San Francisco",
+                  "state": "CA",
+                },
+                "hobbies": ["painting", "yoga", "travel"],
+              },
+              {
+                "name": "Bob Johnson",
+                "age": 45,
+                "address": {
+                  "city": "Chicago",
+                  "state": "IL",
+                },
+                "hobbies": ["cooking", "gardening", "music"],
+              },
+            ],
+          },
+          expression:
+            "body.people[?age > `30`].{name: name, city: address.city}",
+        },
+        simple_order: {
+          json: {
+            "id": 123,
+            "value": 45.67,
+            "items": [{}, {}, {}],
+            "timestamp": "2023-10-27T10:00:00Z",
+          },
+          expression: "merge(body, query_params)",
+        },
+      };
 
-    // Debounce function to limit how often a function can be called
-    function debounce(func, wait) {
+      // Debounce function to limit how often a function can be called
+      function debounce(func, wait) {
         let timeout;
         return function(...args) {
-            const context = this;
-            clearTimeout(timeout);
-            timeout = setTimeout(() => func.apply(context, args), wait);
+          const context = this;
+          clearTimeout(timeout);
+          timeout = setTimeout(() => func.apply(context, args), wait);
         };
-    }
+      }
 
-    // Function to process the JSON and JMESPath expression
-    async function processJMESPath() {
-        const jsonInput = document.getElementById('jsonInput').value;
-        const jmesPathInput = document.getElementById('jmesPathInput').value;
+      // Function to process the JSON and JMESPath expression
+      async function processJMESPath() {
+        const jsonInput = document.getElementById("jsonInput").value;
+        const jmesPathInput =
+          document.getElementById("jmesPathInput").value;
+        const queryParams = document.getElementById("queryParams").value;
 
         try {
-            const jsonData = JSON.parse(jsonInput);
+          const jsonData = JSON.parse(jsonInput);
 
-            const response = await fetch('/test', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    data: jsonData,
-                    expression: jmesPathInput
-                })
-            });
+          // Build the URL with query parameters if provided
+          let url = "/test";
+          if (queryParams) {
+            url = `/test?${queryParams}`;
+          }
 
-            if (!response.ok) {
-                // Handle HTTP error responses
-                const errorText = await response.text();
-                try {
-                    // Try to parse error as JSON
-                    const errorJson = JSON.parse(errorText);
-                    const errorMessage = errorJson.detail || errorJson.message || JSON.stringify(errorJson, null, 2);
-                    document.getElementById('resultOutput').innerHTML = `<pre class="error"><code>Error: ${escapeHtml(errorMessage)}</code></pre>`;
-                } catch (e) {
-                    // If parsing fails, display error as plain text
-                    document.getElementById('resultOutput').innerHTML = `<pre class="error"><code>Error: ${escapeHtml(errorText)}</code></pre>`;
-                }
-                return;
-            }
+          const response = await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              data: jsonData,
+              expression: jmesPathInput,
+            }),
+          });
 
-            const responseText = await response.text();
+          if (!response.ok) {
+            // Handle HTTP error responses
+            const errorText = await response.text();
             try {
-                // Try to parse as JSON first
-                const jsonData = JSON.parse(responseText);
-                
-                // Check if the response only contains an error property
-                if (Object.keys(jsonData).length === 1 && jsonData.error) {
-                    // Display error message without syntax highlighting
-                    document.getElementById('resultOutput').innerHTML = `<pre class="error"><code>${escapeHtml(jsonData.error)}</code></pre>`;
-                } else {
-                    // Format and highlight normal JSON response
-                    const formattedJson = JSON.stringify(jsonData, null, 2);
-                    document.getElementById('resultOutput').innerHTML = `<pre><code class="language-json">${escapeHtml(formattedJson)}</code></pre>`;
-                    hljs.highlightAll();
-                }
+              // Try to parse error as JSON
+              const errorJson = JSON.parse(errorText);
+              const errorMessage = errorJson.detail || errorJson.message
+                || JSON.stringify(errorJson, null, 2);
+              document.getElementById("resultOutput").innerHTML =
+                `<pre class="error"><code>Error: ${
+                  escapeHtml(errorMessage)
+                }</code></pre>`;
             } catch (e) {
-                // If parsing fails, display as plain text
-                document.getElementById('resultOutput').textContent = responseText;
+              // If parsing fails, display error as plain text
+              document.getElementById("resultOutput").innerHTML =
+                `<pre class="error"><code>Error: ${
+                  escapeHtml(errorText)
+                }</code></pre>`;
             }
+            return;
+          }
+
+          const responseText = await response.text();
+          try {
+            // Try to parse as JSON first
+            const jsonData = JSON.parse(responseText);
+
+            // Check if the response only contains an error property
+            if (Object.keys(jsonData).length === 1 && jsonData.error) {
+              // Display error message without syntax highlighting
+              document.getElementById("resultOutput").innerHTML =
+                `<pre class="error"><code>${
+                  escapeHtml(jsonData.error)
+                }</code></pre>`;
+            } else {
+              // Format and highlight normal JSON response
+              const formattedJson = JSON.stringify(jsonData, null, 2);
+              document.getElementById("resultOutput").innerHTML =
+                `<pre><code class="language-json">${
+                  escapeHtml(formattedJson)
+                }</code></pre>`;
+              hljs.highlightAll();
+            }
+          } catch (e) {
+            // If parsing fails, display as plain text
+            document.getElementById("resultOutput").textContent =
+              responseText;
+          }
         } catch (error) {
-            document.getElementById('resultOutput').innerHTML = `<pre class="error"><code>Error: ${escapeHtml(error.message)}</code></pre>`;
+          document.getElementById("resultOutput").innerHTML =
+            `<pre class="error"><code>Error: ${
+              escapeHtml(error.message)
+            }</code></pre>`;
         }
-    }
+      }
 
-    // Create a debounced version of the process function (500ms delay)
-    const debouncedProcess = debounce(processJMESPath, 500);
+      // Create a debounced version of the process function (500ms delay)
+      const debouncedProcess = debounce(processJMESPath, 500);
 
-    // Add event listener for the submit button
-    document.getElementById('submitBtn').addEventListener('click', processJMESPath);
+      // Add event listener for the submit button
+      document.getElementById("submitBtn").addEventListener(
+        "click",
+        processJMESPath,
+      );
 
-    // Function to set up or remove auto-update listeners
-    function toggleAutoUpdate() {
-        const autoUpdateEnabled = document.getElementById('autoUpdateCheckbox').checked;
-        const jsonInput = document.getElementById('jsonInput');
-        const jmesPathInput = document.getElementById('jmesPathInput');
+      // Function to set up or remove auto-update listeners
+      function toggleAutoUpdate() {
+        const autoUpdateEnabled =
+          document.getElementById("autoUpdateCheckbox").checked;
+        const jsonInput = document.getElementById("jsonInput");
+        const jmesPathInput = document.getElementById("jmesPathInput");
+        const queryParams = document.getElementById("queryParams");
 
         if (autoUpdateEnabled) {
-            jsonInput.addEventListener('input', debouncedProcess);
-            jmesPathInput.addEventListener('input', debouncedProcess);
+          jsonInput.addEventListener("input", debouncedProcess);
+          jmesPathInput.addEventListener("input", debouncedProcess);
+          queryParams.addEventListener("input", debouncedProcess);
         } else {
-            jsonInput.removeEventListener('input', debouncedProcess);
-            jmesPathInput.removeEventListener('input', debouncedProcess);
+          jsonInput.removeEventListener("input", debouncedProcess);
+          jmesPathInput.removeEventListener("input", debouncedProcess);
+          queryParams.removeEventListener("input", debouncedProcess);
         }
-    }
+      }
 
-    // Add event listener for the checkbox
-    document.getElementById('autoUpdateCheckbox').addEventListener('change', toggleAutoUpdate);
+      // Add event listener for the checkbox
+      document.getElementById("autoUpdateCheckbox").addEventListener(
+        "change",
+        toggleAutoUpdate,
+      );
 
-    // Add event listener for the example dropdown
-    document.getElementById('exampleSelect').addEventListener('change', function() {
-        const selectedExample = this.value;
-        if (selectedExample && examples[selectedExample]) {
+      // Add event listener for the example dropdown
+      document.getElementById("exampleSelect").addEventListener(
+        "change",
+        function() {
+          const selectedExample = this.value;
+          if (selectedExample && examples[selectedExample]) {
             const example = examples[selectedExample];
-            document.getElementById('jsonInput').value = JSON.stringify(example.json, null, 2);
+            document.getElementById("jsonInput").value = JSON.stringify(
+              example.json,
+              null,
+              2,
+            );
             if (example.expression) {
-                document.getElementById('jmesPathInput').value = example.expression;
+              document.getElementById("jmesPathInput").value =
+                example.expression;
             }
-            
+
+            // Set some example query parameters for demonstration
+            if (selectedExample === "person") {
+              document.getElementById("queryParams").value =
+                "filter=age&min_age=30&source=ui";
+            } else if (selectedExample === "aws") {
+              document.getElementById("queryParams").value =
+                "env=production&type=ec2";
+            } else if (selectedExample === "simple_order") {
+              document.getElementById("queryParams").value =
+                "channel=web&processed_by=proxy";
+            } else if (selectedExample === "prometheus") {
+              document.getElementById("queryParams").value =
+                "source=prometheus-webhook&timestamp=" + Date.now();
+            } else {
+              document.getElementById("queryParams").value =
+                "source=ui&timestamp=" + Date.now();
+            }
+
             // Process the example immediately regardless of auto-update setting
             processJMESPath();
-        }
-    });
+          }
+        },
+      );
 
-    // Add event listener for the expression dropdown
-    document.getElementById('expressionSelect').addEventListener('change', function() {
-        const selectedExpression = this.value;
-        if (selectedExpression && expressionExamples[selectedExpression]) {
-            document.getElementById('jmesPathInput').value = expressionExamples[selectedExpression];
-            
+      // Add event listener for the expression dropdown
+      document.getElementById("expressionSelect").addEventListener(
+        "change",
+        function() {
+          const selectedExpression = this.value;
+          if (
+            selectedExpression && expressionExamples[selectedExpression]
+          ) {
+            document.getElementById("jmesPathInput").value =
+              expressionExamples[selectedExpression];
+
+            // Set appropriate query parameters for certain expressions
+            if (selectedExpression === "query_params_only") {
+              document.getElementById("queryParams").value =
+                "user_id=12345&role=admin&source=dropdown";
+            } else if (
+              selectedExpression === "merge_body_with_params"
+              || selectedExpression === "construct_new_payload"
+            ) {
+              document.getElementById("queryParams").value =
+                "channel=api&processor_version=1.0";
+            } else if (
+              selectedExpression.startsWith("merge_labels_into_alerts")
+            ) {
+              document.getElementById("queryParams").value =
+                "source=merged-via-proxy&param1=value1";
+            }
+
             // Process immediately regardless of auto-update setting
             processJMESPath();
-        }
-    });
+          }
+        },
+      );
 
-    // Helper function to escape HTML special characters
-    function escapeHtml(text) {
+      // Helper function to escape HTML special characters
+      function escapeHtml(text) {
         return text
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;");
-    }
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
 
-    // Initialize syntax highlighting
-    document.addEventListener('DOMContentLoaded', function() {
+      // Initialize syntax highlighting
+      document.addEventListener("DOMContentLoaded", function() {
         hljs.highlightAll();
-    });
+      });
     </script>
   </body>
 </html>
