@@ -40,7 +40,7 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
   }
   ```
 
-### `/forward`
+### `/`
 
 - **Method**: POST
 - **Description**: Forwards incoming JSON data to the configured `FORWARD_URL` after applying the JMESPath expression. Returns the response from the forward URL.
@@ -63,7 +63,7 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
 3. Use environment variables to configure the app as needed:
    ```bash
    export JMESPATH_EXPRESSION="user.name"
-   export FORWARD_URL="http://example.com/forward"
+   export FORWARD_URL="http://example.com"
    ```
 
 ### Running Tests

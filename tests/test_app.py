@@ -72,7 +72,7 @@ async def test_forward_json_without_forward_url(test_client):
     # Patch the actual global variable used by the app
     with patch("jmespath_proxy.app.FORWARD_URL", ""):
         test_data = {"user": {"name": "John", "age": 30}}
-        response = await test_client.post("/forward", json=test_data)
+        response = await test_client.post("/", json=test_data)
         assert response.status_code == HTTP_200_OK
         assert "error" in response.json()
         assert "FORWARD_URL environment variable is not set" in response.json()["error"]
@@ -107,7 +107,7 @@ async def test_forward_json_with_jmespath_expression(test_client):
         # The path needs to point to where the AsyncClient instance actually is
         # which the test_client makes available via its app attribute.
         with patch.object(test_client.app.state.httpx_client, "post", mock_post):
-            response = await test_client.post("/forward", json=test_data)
+            response = await test_client.post("/", json=test_data)
 
             # Expect 200 OK now
             assert response.status_code == HTTP_200_OK
@@ -131,7 +131,7 @@ async def test_forward_json_http_error(test_client):
         mock_post = AsyncMock(side_effect=HTTPError("Connection error"))
 
         with patch.object(test_client.app.state.httpx_client, "post", mock_post):
-            response = await test_client.post("/forward", json=test_data)
+            response = await test_client.post("/", json=test_data)
 
             # Expect 200 OK now, returning the error payload
             assert response.status_code == HTTP_200_OK
