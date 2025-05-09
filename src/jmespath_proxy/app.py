@@ -197,23 +197,44 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
         }
 
     # Forward to remote system
+    client = request.app.state.httpx_client
+
+    if TYPE_CHECKING:
+        client = cast(AsyncClient, client)
+
+    # Set up basic auth if credentials are provided
+    auth = USE_CLIENT_DEFAULT
+    if FORWARD_BASIC_AUTH_USERNAME and FORWARD_BASIC_AUTH_PASSWORD:
+        auth = BasicAuth(
+            username=FORWARD_BASIC_AUTH_USERNAME,
+            password=FORWARD_BASIC_AUTH_PASSWORD,
+        )
+        request.logger.info(f"Using basic auth for request to {FORWARD_URL}")
+
+    response = None
+
     try:
-        client = request.app.state.httpx_client
-
-        if TYPE_CHECKING:
-            client = cast(AsyncClient, client)
-
-        # Set up basic auth if credentials are provided
-        auth = USE_CLIENT_DEFAULT
-        if FORWARD_BASIC_AUTH_USERNAME and FORWARD_BASIC_AUTH_PASSWORD:
-            auth = BasicAuth(
-                username=FORWARD_BASIC_AUTH_USERNAME,
-                password=FORWARD_BASIC_AUTH_PASSWORD,
-            )
-            request.logger.info(f"Using basic auth for request to {FORWARD_URL}")
-
         response = await client.post(FORWARD_URL, json=result, auth=auth)
         response.raise_for_status()
+    except HTTPError as e:
+        error_msg = f"Error forwarding to {FORWARD_URL}: {str(e)}"
+        # Include upstream response content in the log if available
+        if response is not None:
+            try:
+                # Attempt to get text content, fall back to bytes representation
+                error_content = response.text
+            except Exception:
+                error_content = str(response.content)
+            error_msg += f" Upstream response content: {error_content}"
+
+        request.logger.error(error_msg)
+        # Include query params in the error response as well
+        return {
+            "error": f"Failed to forward request: {str(e)}",
+            "original_data": result,  # This 'result' might be transformed or not
+            "query_params": query_params_dict,
+        }
+    else:
         request.logger.info(
             f"Successfully forwarded to {FORWARD_URL}, status: {response.status_code}"
         )
@@ -235,14 +256,6 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
             media_type=content_type,
             headers=dict(response.headers),
         )
-    except HTTPError as e:
-        request.logger.error(f"Error forwarding to {FORWARD_URL}: {str(e)}")
-        # Include query params in the error response as well
-        return {
-            "error": f"Failed to forward request: {str(e)}",
-            "original_data": result,  # This 'result' might be transformed or not
-            "query_params": query_params_dict,
-        }
 
 
 @dataclass
