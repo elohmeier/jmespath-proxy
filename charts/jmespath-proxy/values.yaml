@@ -213,3 +213,21 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
+
+# Configuration for Prometheus scraping
+prometheus:
+  # ServiceMonitor configuration for Prometheus Operator
+  serviceMonitor:
+    # Set to true to create a ServiceMonitor custom resource
+    enabled: false
+    # Optional namespace where ServiceMonitor should be created
+    # If not specified, the same namespace as the chart is used
+    namespace: ""
+    # Additional labels to add to the ServiceMonitor
+    # This is often used to match Prometheus instance selector
+    additionalLabels: {}
+    # release: prometheus
+    # How often Prometheus should scrape the ServiceMonitor
+    interval: "30s"
+    # Timeout for scrape requests
+    scrapeTimeout: "10s"

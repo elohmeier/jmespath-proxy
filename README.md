@@ -9,6 +9,7 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
 - **Forwarding**: Forward transformed JSON payloads to a configurable remote URL.
 - **Test Endpoint**: Test JMESPath expressions directly via a test endpoint.
 - **Async Support**: Built with async support using `httpx` for HTTP requests.
+- **Prometheus Metrics**: Built-in metrics endpoint for monitoring with Prometheus.
 - **Configurable via Environment Variables**: Customize the behavior of the application using environment variables.
 
 ## Environment Variables
@@ -33,6 +34,12 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
 
 - **Method**: GET
 - **Description**: Health check endpoint for readiness/liveness probes.
+
+### `/metrics`
+
+- **Method**: GET
+- **Description**: Prometheus metrics endpoint that exposes application metrics in Prometheus format.
+- **Metrics**: Includes request counts, response times, status codes, and other standard HTTP metrics.
 
 ### `/test`
 

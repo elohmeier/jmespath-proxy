@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING, Any, cast
 import jmespath
 import truststore
 from httpx import USE_CLIENT_DEFAULT, AsyncClient, BasicAuth, HTTPError
+from prometheus_client import Counter, Histogram
 from jmespath.exceptions import ParseError
 from litestar import Litestar, Response, get, post, status_codes
 from litestar.connection import Request
 from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.logging import LoggingConfig
+from litestar.plugins.prometheus import PrometheusConfig, PrometheusController
 from litestar.response import Template
 from litestar.static_files.config import create_static_files_router
 from litestar.template import TemplateConfig
@@ -38,6 +40,43 @@ VERIFY_SSL = os.environ.get("VERIFY_SSL", "true").lower() != "false"
 # Basic auth credentials for the forward URL (optional)
 FORWARD_BASIC_AUTH_USERNAME = os.environ.get("FORWARD_BASIC_AUTH_USERNAME", default="")
 FORWARD_BASIC_AUTH_PASSWORD = os.environ.get("FORWARD_BASIC_AUTH_PASSWORD", default="")
+
+# --- Define custom Prometheus metrics ---
+
+# Counter for total successful forwarding requests
+metrics_forwarded_total = Counter(
+    "jmespath_proxy_forwarded_total", "Total number of messages successfully forwarded."
+)
+
+# Counter for forwarding errors
+# Added a label for the error type (e.g., 'http_error', 'config_error')
+metrics_forward_errors_total = Counter(
+    "jmespath_proxy_forward_errors_total",
+    "Total number of errors encountered during forwarding.",
+    ["error_type"],  # Labels for differentiating error types
+)
+
+# Histogram for the duration of the *forwarded* HTTP request
+metrics_forward_duration_seconds = Histogram(
+    "jmespath_proxy_forward_duration_seconds",
+    "Duration of forwarded HTTP requests in seconds.",
+    buckets=[
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        float("inf"),
+    ],
+)
+
+# --- End custom Prometheus metrics definition ---
 
 
 def apply_jmespath_expression(
@@ -169,9 +208,6 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
     query_params_dict = dict(request.query_params)
     request.logger.info(f"Query parameters: {query_params_dict}")
 
-    # Create a combined context for JMESPath evaluation
-    # Original data is under 'body', query params under 'query_params'
-
     # Apply JMESPath transformation if configured
     result, error = apply_jmespath_expression(
         JMESPATH_EXPRESSION, data, query_params_dict, request.logger
@@ -190,6 +226,8 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
     # Raise an error if no FORWARD_URL is specified
     if not FORWARD_URL:
         request.logger.error("No FORWARD_URL environment variable specified")
+        # Increment a config error metric
+        metrics_forward_errors_total.labels(error_type="config_error").inc()
         return {
             "error": "Configuration error: FORWARD_URL environment variable is not set",
             "original_data": result,  # This 'result' might be transformed or not
@@ -213,38 +251,71 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
 
     response = None
 
-    try:
-        response = await client.post(FORWARD_URL, json=result, auth=auth)
-        response.raise_for_status()
-    except HTTPError as e:
-        error_msg = f"Error forwarding to {FORWARD_URL}: {str(e)}"
-        # Include upstream response content in the log if available
-        if response is not None:
-            try:
-                # Attempt to get text content, fall back to bytes representation
-                error_content = response.text
-            except Exception:
-                error_content = str(response.content)
-            error_msg += f" Upstream response content: {error_content}"
+    # Use the histogram's time() context manager to automatically record duration
+    with metrics_forward_duration_seconds.time():
+        try:
+            response = await client.post(FORWARD_URL, json=result, auth=auth)
+            response.raise_for_status()
+        except HTTPError as e:
+            error_msg = f"Error forwarding to {FORWARD_URL}: {str(e)}"
 
-        request.logger.error(error_msg)
-        # Include query params in the error response as well
-        return {
-            "error": f"Failed to forward request: {str(e)}",
-            "original_data": result,  # This 'result' might be transformed or not
-            "query_params": query_params_dict,
-        }
-    else:
-        request.logger.info(
-            f"Successfully forwarded to {FORWARD_URL}, status: {response.status_code}"
-        )
+            # Include upstream response content in the log if available
+            if response is not None:
+                try:
+                    # Attempt to get text content, fall back to bytes representation
+                    error_content = response.text
+                except Exception:
+                    error_content = str(response.content)
+                error_msg += f" Upstream response content: {error_content}"
+            else:
+                # If response is None, it might be a connection error before headers/body
+                error_msg += " No upstream response received."
+
+            request.logger.error(error_msg)
+
+            # Increment the forwarding error metric with error type
+            metrics_forward_errors_total.labels(error_type="http_error").inc()
+
+            # Include query params in the error response as well
+            return {
+                "error": f"Failed to forward request: {str(e)}",
+                "original_data": result,  # This 'result' might be transformed or not
+                "query_params": query_params_dict,
+            }
+        except Exception as e:  # Catch any other exceptions during the request
+            error_msg = f"Unexpected error forwarding to {FORWARD_URL}: {str(e)}"
+            request.logger.error(error_msg)
+
+            # Increment the forwarding error metric with error type
+            metrics_forward_errors_total.labels(error_type="unexpected_error").inc()
+
+            return {
+                "error": f"Unexpected error during forwarding: {str(e)}",
+                "original_data": result,
+                "query_params": query_params_dict,
+            }
+        else:
+            # Request was successful
+            request.logger.info(
+                f"Successfully forwarded to {FORWARD_URL}, status: {response.status_code}"
+            )
+
+            # Increment the successful forwarding metric
+            metrics_forwarded_total.inc()
 
         # Get the content type from the response
         content_type = response.headers.get("content-type", "")
 
         # If the response is JSON, parse it and return the Python object
         if "application/json" in content_type:
-            content = await response.json()
+            try:
+                content = await response.json()
+            except Exception as json_error:
+                # Handle cases where upstream sends non-parseable JSON
+                request.logger.warning(
+                    f"Failed to parse upstream JSON response: {json_error}. Returning raw content."
+                )
+                content = response.content
         else:
             # For non-JSON responses, use the raw content
             content = response.content
@@ -272,9 +343,6 @@ async def test_jmes(data: JMESPathTestPayload, request: Request) -> Any:
     query_params_dict = dict(request.query_params)
     request.logger.info(f"Query parameters: {query_params_dict}")
 
-    # Create a combined context for JMESPath evaluation
-    # The 'data' field from the payload is under 'body', query params under 'query_params'
-
     # Use the provided expression if available, otherwise fall back to the server default
     jmespath_expression = data.expression if data.expression else JMESPATH_EXPRESSION
 
@@ -298,6 +366,14 @@ async def test_jmes(data: JMESPathTestPayload, request: Request) -> Any:
     return result
 
 
+# Configure Prometheus metrics
+prometheus_config = PrometheusConfig(
+    app_name="jmespath_proxy",
+    # These buckets are used by the Litestar plugin's middleware for *request* duration.
+    # Our custom histogram uses its own buckets defined above.
+    buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
+)
+
 # Configure logging using Litestar's LoggingConfig
 logging_config = LoggingConfig(
     root={"level": "INFO", "handlers": ["queue_listener"]},
@@ -315,7 +391,9 @@ app = Litestar(
         forward_json,
         test_jmes,
         create_static_files_router(path="/static", directories=[STATIC_DIR]),
+        PrometheusController,  # Add the Prometheus controller for metrics
     ],
+    middleware=[prometheus_config.middleware],  # Add the Prometheus middleware
     template_config=TemplateConfig(directory=TEMPLATE_DIR, engine=JinjaTemplateEngine),
     lifespan=[httpx_lifespan],
 )
