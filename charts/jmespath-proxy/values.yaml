@@ -2,26 +2,36 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-# Environment variables for the application
-env:
-  # JMESPath expression to transform the data (can be multiline)
-  # JMESPATH_EXPRESSION: |
-  #   merge(@, {
-  #   alerts: alerts[*].merge(@,
-  #   {labels: merge(`{
-  #   "new_label_1": "value1", "source": "webhook_processor"}`, labels)})})
-  JMESPATH_EXPRESSION: ""
+# Configuration for the JMESPath expression
+jmespathExpression:
+  # Direct value for the JMESPath expression (used if no other source is enabled)
+  # Can be a multiline string using YAML block scalar (|)
+  value: ""
+  # Source the JMESPath expression from a ConfigMap
+  fromConfigMap:
+    enabled: false
+    useExisting: false # Set to true to use an existing ConfigMap
+    name: "" # Name of the ConfigMap (required if enabled)
+    key: "jmespath-expression" # Key in the ConfigMap
 
-  # URL to forward the transformed data to
-  FORWARD_URL: ""
+# Configuration for the Forward URL
+forwardUrl:
+  # Direct value for the Forward URL (used if no other source is enabled)
+  value: ""
+  # Source the Forward URL from a ConfigMap
+  fromConfigMap:
+    enabled: false
+    useExisting: false # Set to true to use an existing ConfigMap
+    name: "" # Name of the ConfigMap (required if enabled)
+    key: "forward-url" # Key in the ConfigMap
+  # Source the Forward URL from a Secret
+  fromSecret:
+    enabled: false
+    useExisting: false # Set to true to use an existing Secret
+    name: "" # Name of the Secret (required if enabled)
+    key: "forward-url" # Key in the Secret
 
-  # Timeout for HTTP requests in seconds
-  HTTPX_TIMEOUT: "30.0"
-
-  # Set to "false" to disable SSL verification (insecure)
-  # VERIFY_SSL: "true"
-
-# Configuration for forwarding requests
+# Configuration for forwarding requests (basic auth)
 forwardAuth:
   basicAuth:
     # Username for basic auth (optional)
@@ -38,6 +48,12 @@ forwardAuth:
       # Key in the secret that contains the password (required if enabled)
       key: "forward-basic-auth-password"
 
+# Other environment variables
+env:
+  # Timeout for HTTP requests in seconds
+  HTTPX_TIMEOUT: "30.0"
+  # Set to "false" to disable SSL verification (insecure)
+  VERIFY_SSL: "true"
 
 # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1

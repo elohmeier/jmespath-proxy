@@ -1,0 +1,16 @@
+{{- if or (and .Values.jmespathExpression.fromConfigMap.enabled (not .Values.jmespathExpression.fromConfigMap.useExisting)) (and .Values.forwardUrl.fromConfigMap.enabled (not .Values.forwardUrl.fromConfigMap.useExisting)) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "jmespath-proxy.fullname" . }}-config
+  labels:
+    {{- include "jmespath-proxy.labels" . | nindent 4 }}
+data:
+  {{- if and .Values.jmespathExpression.fromConfigMap.enabled (not .Values.jmespathExpression.fromConfigMap.useExisting) }}
+  {{ .Values.jmespathExpression.fromConfigMap.key | default "jmespath-expression" }}: |
+    {{- .Values.jmespathExpression.value | nindent 4 }}
+  {{- end }}
+  {{- if and .Values.forwardUrl.fromConfigMap.enabled (not .Values.forwardUrl.fromConfigMap.useExisting) }}
+  {{ .Values.forwardUrl.fromConfigMap.key | default "forward-url" }}: {{ .Values.forwardUrl.value | quote }}
+  {{- end }}
+{{- end }}

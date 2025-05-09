@@ -41,14 +41,34 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
-            {{- if .Values.env.JMESPATH_EXPRESSION }}
+            # JMESPATH_EXPRESSION configuration
             - name: JMESPATH_EXPRESSION
-              value: {{ .Values.env.JMESPATH_EXPRESSION | quote }}
-            {{- end }}
-            {{- if .Values.env.FORWARD_URL }}
+              {{- if .Values.jmespathExpression.fromConfigMap.enabled }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ if .Values.jmespathExpression.fromConfigMap.useExisting }}{{ .Values.jmespathExpression.fromConfigMap.name }}{{- else }}{{ include "jmespath-proxy.fullname" . }}-config{{- end }}
+                  key: {{ .Values.jmespathExpression.fromConfigMap.key | default "jmespath-expression" }}
+              {{- else }}
+              value: {{ .Values.jmespathExpression.value | quote }}
+              {{- end }}
+
+            # FORWARD_URL configuration
             - name: FORWARD_URL
-              value: {{ .Values.env.FORWARD_URL | quote }}
-            {{- end }}
+              {{- if .Values.forwardUrl.fromSecret.enabled }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.forwardUrl.fromSecret.name }} # Assumes useExisting is true if enabled
+                  key: {{ .Values.forwardUrl.fromSecret.key | default "forward-url" }}
+              {{- else if .Values.forwardUrl.fromConfigMap.enabled }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ if .Values.forwardUrl.fromConfigMap.useExisting }}{{ .Values.forwardUrl.fromConfigMap.name }}{{- else }}{{ include "jmespath-proxy.fullname" . }}-config{{- end }}
+                  key: {{ .Values.forwardUrl.fromConfigMap.key | default "forward-url" }}
+              {{- else }}
+              value: {{ .Values.forwardUrl.value | quote }}
+              {{- end }}
+
+            # Other environment variables
             {{- if .Values.env.HTTPX_TIMEOUT }}
             - name: HTTPX_TIMEOUT
               value: {{ .Values.env.HTTPX_TIMEOUT | quote }}
@@ -57,10 +77,14 @@ spec:
             - name: VERIFY_SSL
               value: {{ .Values.env.VERIFY_SSL | quote }}
             {{- end }}
+
+            # Basic Auth Username
             {{- if .Values.forwardAuth.basicAuth.username }}
             - name: FORWARD_BASIC_AUTH_USERNAME
               value: {{ .Values.forwardAuth.basicAuth.username | quote }}
             {{- end }}
+
+            # Basic Auth Password
             {{- if .Values.forwardAuth.basicAuth.passwordSecret.enabled }}
             - name: FORWARD_BASIC_AUTH_PASSWORD
               valueFrom:
