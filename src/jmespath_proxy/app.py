@@ -270,6 +270,7 @@ app = Litestar(
     logging_config=logging_config,
     route_handlers=[
         index,
+        health_check,
         forward_json,
         test_jmes,
         create_static_files_router(path="/static", directories=[STATIC_DIR]),
