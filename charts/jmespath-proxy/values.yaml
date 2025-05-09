@@ -15,24 +15,29 @@ env:
   # URL to forward the transformed data to
   FORWARD_URL: ""
 
-  # Basic auth credentials for the forward URL (optional)
-  FORWARD_BASIC_AUTH_USERNAME: ""
-  FORWARD_BASIC_AUTH_PASSWORD: ""
-
-  # Secret configuration for the forward basic auth password
-  FORWARD_BASIC_AUTH_PASSWORD_SECRET:
-    # Set to true to use an existing secret instead of creating one
-    useExisting: false
-    # Name of the existing secret to use
-    name: ""
-    # Key in the secret that contains the password
-    key: "forward-basic-auth-password"
-
   # Timeout for HTTP requests in seconds
   HTTPX_TIMEOUT: "30.0"
 
   # Set to "false" to disable SSL verification (insecure)
   # VERIFY_SSL: "true"
+
+# Configuration for forwarding requests
+forwardAuth:
+  basicAuth:
+    # Username for basic auth (optional)
+    username: ""
+    # Secret configuration for the password (optional)
+    passwordSecret:
+      # Set to true to enable using a secret for the password
+      enabled: false
+      # Set to true to use an existing secret instead of creating one
+      useExisting: false
+      # Name of the secret to use (required if enabled and useExisting is true)
+      # If enabled and useExisting is false, a secret named {{ include "jmespath-proxy.fullname" . }}-auth will be created.
+      name: ""
+      # Key in the secret that contains the password (required if enabled)
+      key: "forward-basic-auth-password"
+
 
 # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1

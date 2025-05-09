@@ -57,20 +57,20 @@ spec:
             - name: VERIFY_SSL
               value: {{ .Values.env.VERIFY_SSL | quote }}
             {{- end }}
-            {{- if .Values.env.FORWARD_BASIC_AUTH_USERNAME }}
+            {{- if .Values.forwardAuth.basicAuth.username }}
             - name: FORWARD_BASIC_AUTH_USERNAME
-              value: {{ .Values.env.FORWARD_BASIC_AUTH_USERNAME | quote }}
+              value: {{ .Values.forwardAuth.basicAuth.username | quote }}
             {{- end }}
-            {{- if .Values.env.FORWARD_BASIC_AUTH_PASSWORD }}
+            {{- if .Values.forwardAuth.basicAuth.passwordSecret.enabled }}
             - name: FORWARD_BASIC_AUTH_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  {{- if .Values.env.FORWARD_BASIC_AUTH_PASSWORD_SECRET.useExisting }}
-                  name: {{ .Values.env.FORWARD_BASIC_AUTH_PASSWORD_SECRET.name }}
+                  {{- if .Values.forwardAuth.basicAuth.passwordSecret.useExisting }}
+                  name: {{ .Values.forwardAuth.basicAuth.passwordSecret.name }}
                   {{- else }}
                   name: {{ include "jmespath-proxy.fullname" . }}-auth
                   {{- end }}
-                  key: {{ .Values.env.FORWARD_BASIC_AUTH_PASSWORD_SECRET.key | default "forward-basic-auth-password" }}
+                  key: {{ .Values.forwardAuth.basicAuth.passwordSecret.key | default "forward-basic-auth-password" }}
             {{- end }}
           ports:
             - name: http
