@@ -19,6 +19,15 @@ env:
   FORWARD_BASIC_AUTH_USERNAME: ""
   FORWARD_BASIC_AUTH_PASSWORD: ""
 
+  # Secret configuration for the forward basic auth password
+  FORWARD_BASIC_AUTH_PASSWORD_SECRET:
+    # Set to true to use an existing secret instead of creating one
+    useExisting: false
+    # Name of the existing secret to use
+    name: ""
+    # Key in the secret that contains the password
+    key: "forward-basic-auth-password"
+
   # Timeout for HTTP requests in seconds
   HTTPX_TIMEOUT: "30.0"
 
