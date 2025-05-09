@@ -6,6 +6,37 @@
 jmespathExpression:
   # Direct value for the JMESPath expression (used if no other source is enabled)
   # Can be a multiline string using YAML block scalar (|)
+  #
+  # The JMESPath expression is applied to a context object with two keys:
+  # - `body`: Contains the JSON payload from the incoming request body.
+  # - `query_params`: Contains a dictionary of the parsed URL query parameters.
+  #
+  # Examples:
+  #
+  # # Example 1: Construct a new payload from body data and query parameters
+  # # If the incoming body is {"id": 123, "value": 45.67} and the request is /?channel=web
+  # # The expression context is {"body": {"id": 123, "value": 45.67}, "query_params": {"channel": "web"}}
+  # # The resulting payload forwarded would be {"order_id": 123, "source": "web"}
+  # value: |
+  #   {
+  #     order_id: body.id,
+  #     source: query_params.channel
+  #   }
+  #
+  # # Example 2: Manipulate Prometheus Alertmanager webhook payload
+  # # Merges a new label "source" from query_params into each alert's labels array.
+  # # Note the use of backticks (`) around string literals within the expression
+  # # and escaping of quotes if the string contains them.
+  # # If the incoming body contains alerts and the request is /?source=alertmanager
+  # # The resulting payload will have a "source: alertmanager" label added to each alert.
+  # value: |
+  #   {
+  #     alerts: body.alerts[*].{
+  #       status: status,
+  #       labels: merge(labels, `{"source": $.query_params.source}`)
+  #     }
+  #   }
+  #
   value: ""
   # Source the JMESPath expression from a ConfigMap
   fromConfigMap:
