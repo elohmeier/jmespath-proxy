@@ -16,7 +16,7 @@ classifiers = [
 ]
 dependencies = [
   "jmespath-community>=1.1.3",
-  "litestar[jinja,prometheus,standard]>=2.15.1",
+  "litestar[jinja,prometheus,standard,structlog]>=2.15.1",
   "prometheus-client>=0.21.1",
   "truststore>=0.10.1",
 ]

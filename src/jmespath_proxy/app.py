@@ -1,3 +1,4 @@
+import logging
 import os
 import pathlib
 import ssl
@@ -7,19 +8,53 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import jmespath
+import structlog
 import truststore
 from httpx import USE_CLIENT_DEFAULT, AsyncClient, BasicAuth, HTTPError
-from prometheus_client import Counter, Histogram
 from jmespath.exceptions import ParseError
 from litestar import Litestar, Response, get, post, status_codes
 from litestar.connection import Request
 from litestar.contrib.jinja import JinjaTemplateEngine
-from litestar.logging import LoggingConfig
+from litestar.logging import LoggingConfig, StructLoggingConfig
+from litestar.middleware.logging import LoggingMiddlewareConfig
 from litestar.plugins.prometheus import PrometheusConfig, PrometheusController
+from litestar.plugins.structlog import StructlogConfig, StructlogPlugin
 from litestar.response import Template
 from litestar.static_files.config import create_static_files_router
 from litestar.template import TemplateConfig
-from litestar.types import Logger
+from prometheus_client import Counter, Histogram
+
+logging_config = StructlogConfig(
+    structlog_logging_config=StructLoggingConfig(
+        log_exceptions="always",
+        traceback_line_limit=4,
+        standard_lib_logging_config=LoggingConfig(
+            root={
+                "level": logging.getLevelName(20),
+                "handlers": ["queue_listener"],
+            },
+            loggers={
+                "uvicorn.access": {
+                    "propagate": False,
+                    "level": 30,
+                    "handlers": ["queue_listener"],
+                },
+                "uvicorn.error": {
+                    "propagate": False,
+                    "level": 20,
+                    "handlers": ["queue_listener"],
+                },
+            },
+        ),
+        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    ),
+    middleware_logging_config=LoggingMiddlewareConfig(
+        request_log_fields=["method", "path", "path_params", "query"],
+        response_log_fields=["status_code"],
+    ),
+)
+
+logger = structlog.get_logger()
 
 APP_DIR = pathlib.Path(__file__).parent.resolve()
 TEMPLATE_DIR = APP_DIR / "templates"
@@ -83,7 +118,6 @@ def apply_jmespath_expression(
     expression: str,
     body_data: dict[str, Any],
     query_params: dict[str, Any],
-    logger: Logger | None = None,
 ) -> tuple[Any, str | None]:
     """Apply a JMESPath expression to the provided data.
 
@@ -91,7 +125,6 @@ def apply_jmespath_expression(
         expression: The JMESPath expression to apply
         body_data: The body data to transform
         query_params: Query parameters to include in context
-        logger: Optional logger for logging messages
 
     Returns:
         Tuple containing:
@@ -100,27 +133,23 @@ def apply_jmespath_expression(
     """
     # Skip processing if no expression is provided
     if not expression:
-        if logger:
-            logger.info("No JMESPath expression provided, returning original data.")
+        logger.info("No JMESPath expression provided", returning="original_data")
         return body_data, None
 
     # Create a combined context for JMESPath evaluation
     context_data = {"body": body_data, "query_params": query_params}
 
     try:
-        if logger:
-            logger.info(f"Applying JMESPath expression: {expression}")
+        logger.info("Applying JMESPath expression", expression=expression)
         result = jmespath.search(expression, context_data)
         return result, None
     except ParseError as e:
         error_msg = f"JMESPath parse error: {str(e)}"
-        if logger:
-            logger.error(error_msg)
+        logger.error("JMESPath parse error", error=str(e), expression=expression)
         return body_data, error_msg
     except Exception as e:
         error_msg = f"JMESPath execution error: {str(e)}"
-        if logger:
-            logger.error(error_msg)
+        logger.error("JMESPath execution error", error=str(e), expression=expression)
         return body_data, error_msg
 
 
@@ -149,37 +178,33 @@ async def httpx_lifespan(app: Litestar) -> AsyncGenerator[None]:
     else:
         # Disable SSL verification (insecure)
         verify = False
-        if app.logger:
-            app.logger.warning("SSL verification is disabled. This is insecure!")
+        logger.warning("SSL verification is disabled. This is insecure!")
 
     app.state.httpx_client = AsyncClient(timeout=HTTPX_TIMEOUT, verify=verify)
 
     if JMESPATH_EXPRESSION:
         try:
             jmespath.compile(JMESPATH_EXPRESSION)
-            if app.logger:
-                app.logger.info(
-                    f"Successfully compiled JMESPATH_EXPRESSION: {JMESPATH_EXPRESSION}"
-                )
-        except ParseError as e:
-            error_msg = (
-                f"Invalid JMESPATH_EXPRESSION '{JMESPATH_EXPRESSION}': {str(e)}. "
-                "This expression will not be applied."
+            logger.info(
+                "Successfully compiled JMESPATH_EXPRESSION",
+                expression=JMESPATH_EXPRESSION,
             )
-            if app.logger:
-                app.logger.error(error_msg)
+        except ParseError as e:
+            logger.error(
+                "Invalid JMESPATH_EXPRESSION",
+                error=str(e),
+                expression=JMESPATH_EXPRESSION,
+            )
             # Note: The application will still start, but the global expression
             # will fail when applied. We log the error but don't exit.
         except Exception as e:
-            error_msg = (
-                f"Unexpected error compiling JMESPATH_EXPRESSION '{JMESPATH_EXPRESSION}': {str(e)}. "
-                "This expression will not be applied."
+            logger.error(
+                "Unexpected error compiling JMESPATH_EXPRESSION",
+                error=str(e),
+                expression=JMESPATH_EXPRESSION,
             )
-            if app.logger:
-                app.logger.error(error_msg)
     else:
-        if app.logger:
-            app.logger.info("No JMESPATH_EXPRESSION environment variable set.")
+        logger.info("No JMESPATH_EXPRESSION environment variable set.")
 
     try:
         yield
@@ -202,15 +227,15 @@ async def health_check() -> dict[str, str]:
 
 @post(path="/", status_code=status_codes.HTTP_200_OK)
 async def forward_json(data: dict[str, Any], request: Request) -> Any:
-    request.logger.info(f"Forward endpoint received data: {data}")
+    logger.info("Forward endpoint received data", data=data)
 
     # Retrieve query parameters and convert to a dictionary
     query_params_dict = dict(request.query_params)
-    request.logger.info(f"Query parameters: {query_params_dict}")
+    logger.info("Query parameters", query_params=query_params_dict)
 
     # Apply JMESPath transformation if configured
     result, error = apply_jmespath_expression(
-        JMESPATH_EXPRESSION, data, query_params_dict, request.logger
+        JMESPATH_EXPRESSION, data, query_params_dict
     )
 
     # Return error response if transformation failed
@@ -221,11 +246,13 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
             "query_params": query_params_dict,
         }
 
-    request.logger.info(f"Final payload for forwarding: {result}")
+    logger.info("Final payload for forwarding", payload=result)
 
     # Raise an error if no FORWARD_URL is specified
     if not FORWARD_URL:
-        request.logger.error("No FORWARD_URL environment variable specified")
+        logger.error(
+            "Configuration error", message="FORWARD_URL environment variable is not set"
+        )
         # Increment a config error metric
         metrics_forward_errors_total.labels(error_type="config_error").inc()
         return {
@@ -247,7 +274,7 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
             username=FORWARD_BASIC_AUTH_USERNAME,
             password=FORWARD_BASIC_AUTH_PASSWORD,
         )
-        request.logger.info(f"Using basic auth for request to {FORWARD_URL}")
+        logger.info("Using basic auth for request", url=FORWARD_URL)
 
     response = None
 
@@ -257,21 +284,21 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
             response = await client.post(FORWARD_URL, json=result, auth=auth)
             response.raise_for_status()
         except HTTPError as e:
-            error_msg = f"Error forwarding to {FORWARD_URL}: {str(e)}"
-
-            # Include upstream response content in the log if available
+            # Get error content if available
+            error_content = None
             if response is not None:
                 try:
-                    # Attempt to get text content, fall back to bytes representation
                     error_content = response.text
                 except Exception:
                     error_content = str(response.content)
-                error_msg += f" Upstream response content: {error_content}"
-            else:
-                # If response is None, it might be a connection error before headers/body
-                error_msg += " No upstream response received."
 
-            request.logger.error(error_msg)
+            logger.error(
+                "Forwarding failed",
+                error=str(e),
+                url=FORWARD_URL,
+                upstream_content=error_content,
+                status_code=response.status_code if response else None,
+            )
 
             # Increment the forwarding error metric with error type
             metrics_forward_errors_total.labels(error_type="http_error").inc()
@@ -283,8 +310,7 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
                 "query_params": query_params_dict,
             }
         except Exception as e:  # Catch any other exceptions during the request
-            error_msg = f"Unexpected error forwarding to {FORWARD_URL}: {str(e)}"
-            request.logger.error(error_msg)
+            logger.error("Unexpected forwarding error", error=str(e), url=FORWARD_URL)
 
             # Increment the forwarding error metric with error type
             metrics_forward_errors_total.labels(error_type="unexpected_error").inc()
@@ -296,8 +322,10 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
             }
         else:
             # Request was successful
-            request.logger.info(
-                f"Successfully forwarded to {FORWARD_URL}, status: {response.status_code}"
+            logger.info(
+                "Request forwarded successfully",
+                url=FORWARD_URL,
+                status_code=response.status_code,
             )
 
             # Increment the successful forwarding metric
@@ -312,8 +340,11 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
                 content = await response.json()
             except Exception as json_error:
                 # Handle cases where upstream sends non-parseable JSON
-                request.logger.warning(
-                    f"Failed to parse upstream JSON response: {json_error}. Returning raw content."
+                logger.warning(
+                    "Failed to parse upstream JSON",
+                    error=str(json_error),
+                    url=FORWARD_URL,
+                    status_code=response.status_code,
                 )
                 content = response.content
         else:
@@ -337,22 +368,23 @@ class JMESPathTestPayload:
 
 @post(path="/test", status_code=status_codes.HTTP_200_OK)
 async def test_jmes(data: JMESPathTestPayload, request: Request) -> Any:
-    request.logger.info(f"Test endpoint received data: {data.data}")
+    logger.info("Test endpoint received data", data=data.data)
 
     # Retrieve query parameters and convert to a dictionary
     query_params_dict = dict(request.query_params)
-    request.logger.info(f"Query parameters: {query_params_dict}")
+    logger.info("Query parameters", query_params=query_params_dict)
 
     # Use the provided expression if available, otherwise fall back to the server default
     jmespath_expression = data.expression if data.expression else JMESPATH_EXPRESSION
 
-    request.logger.info(
-        f"Test endpoint using expression: {jmespath_expression or '[No Expression]'}"
+    logger.info(
+        "Test endpoint using expression",
+        expression=jmespath_expression or "[No Expression]",
     )
 
     # Apply the JMESPath expression
     result, error = apply_jmespath_expression(
-        jmespath_expression, data.data, query_params_dict, request.logger
+        jmespath_expression, data.data, query_params_dict
     )
 
     # Return error response if transformation failed
@@ -374,26 +406,20 @@ prometheus_config = PrometheusConfig(
     buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
 )
 
-# Configure logging using Litestar's LoggingConfig
-logging_config = LoggingConfig(
-    root={"level": "INFO", "handlers": ["queue_listener"]},
-    formatters={
-        "standard": {"format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"}
-    },
-    log_exceptions="always",
-)
+# Configure structlog plugin
+structlog_plugin = StructlogPlugin(logging_config)
 
 app = Litestar(
-    logging_config=logging_config,
     route_handlers=[
         index,
         health_check,
         forward_json,
         test_jmes,
         create_static_files_router(path="/static", directories=[STATIC_DIR]),
-        PrometheusController,  # Add the Prometheus controller for metrics
+        PrometheusController,
     ],
-    middleware=[prometheus_config.middleware],  # Add the Prometheus middleware
+    middleware=[prometheus_config.middleware],
     template_config=TemplateConfig(directory=TEMPLATE_DIR, engine=JinjaTemplateEngine),
     lifespan=[httpx_lifespan],
+    plugins=[structlog_plugin],
 )
