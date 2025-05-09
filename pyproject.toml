@@ -1,6 +1,6 @@
 [project]
 name = "jmespath-proxy"
-version = "0.7.1"
+version = "0.8.0"
 description = "API service to apply JMESPath expressions to JSON data and forward to URLs"
 readme = "README.md"
 authors = [{ name = "Enno Richter", email = "enno@nerdworks.de" }]
