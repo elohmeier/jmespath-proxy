@@ -14,9 +14,14 @@ repos:
         name: Format Python code with Ruff
   - repo: local
     hooks:
+      - id: jupyter-nb-clear-output
+        name: Clear output of ipynb cells
+        entry: uvx --from nbconvert jupyter-nbconvert --ClearOutputPreprocessor.enabled=True --inplace
+        language: system
+        files: \.ipynb$
       - id: dprint
         name: Format files with dprint
         entry: dprint fmt --allow-no-files
         language: system
         pass_filenames: false
-        files: \.(json|md|markdown|toml|dockerfile|yaml|yml)$
+        files: \.(json|html|md|markdown|toml|dockerfile|yaml|yml)$
