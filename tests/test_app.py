@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -9,6 +9,7 @@ from litestar.status_codes import HTTP_200_OK
 from litestar.testing import AsyncTestClient
 
 from jmespath_proxy.app import app as application
+from jmespath_proxy.app import httpx_lifespan
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -373,3 +374,76 @@ async def test_forward_json_with_query_params_but_no_expression(test_client):
                 json=test_data,
                 auth=USE_CLIENT_DEFAULT,
             )
+
+
+@pytest.mark.asyncio
+async def test_lifespan_validates_jmespath_expression_success():
+    """Test that the lifespan logs success for a valid JMESPath expression."""
+    mock_app = MagicMock()
+    mock_app.logger = MagicMock()
+    mock_app.state = MagicMock()  # Ensure state exists for httpx client
+
+    valid_expression = "body.user.name"
+
+    with patch("jmespath_proxy.app.JMESPATH_EXPRESSION", valid_expression):
+        # Call the __aenter__ method of the context manager
+        lifespan_context = httpx_lifespan(mock_app)
+        await lifespan_context.__aenter__()
+
+        # Assert that the logger was called with the success message
+        mock_app.logger.info.assert_any_call(
+            f"Successfully compiled JMESPATH_EXPRESSION: {valid_expression}"
+        )
+
+        # Clean up the httpx client created in the lifespan
+        await lifespan_context.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_lifespan_validates_jmespath_expression_invalid():
+    """Test that the lifespan logs an error for an invalid JMESPath expression."""
+    mock_app = MagicMock()
+    mock_app.logger = MagicMock()
+    mock_app.state = MagicMock()  # Ensure state exists for httpx client
+
+    invalid_expression = "invalid["
+
+    with patch("jmespath_proxy.app.JMESPATH_EXPRESSION", invalid_expression):
+        # Call the __aenter__ method of the context manager
+        lifespan_context = httpx_lifespan(mock_app)
+        await lifespan_context.__aenter__()
+
+        # Assert that the logger was called with an error message about the invalid expression
+        mock_app.logger.error.assert_called()
+        # Get the actual error message
+        error_call_args = mock_app.logger.error.call_args[0]
+        error_message = error_call_args[0]
+
+        # Check that the message contains the expected parts
+        assert f"Invalid JMESPATH_EXPRESSION '{invalid_expression}'" in error_message
+        assert "invalid[" in error_message
+        assert "This expression will not be applied" in error_message
+
+        # Clean up the httpx client created in the lifespan
+        await lifespan_context.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_lifespan_validates_jmespath_expression_empty():
+    """Test that the lifespan logs info when no JMESPath expression is set."""
+    mock_app = MagicMock()
+    mock_app.logger = MagicMock()
+    mock_app.state = MagicMock()  # Ensure state exists for httpx client
+
+    with patch("jmespath_proxy.app.JMESPATH_EXPRESSION", ""):
+        # Call the __aenter__ method of the context manager
+        lifespan_context = httpx_lifespan(mock_app)
+        await lifespan_context.__aenter__()
+
+        # Assert that the logger was called with the info message
+        mock_app.logger.info.assert_any_call(
+            "No JMESPATH_EXPRESSION environment variable set."
+        )
+
+        # Clean up the httpx client created in the lifespan
+        await lifespan_context.__aexit__(None, None, None)

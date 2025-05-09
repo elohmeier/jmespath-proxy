@@ -114,6 +114,34 @@ async def httpx_lifespan(app: Litestar) -> AsyncGenerator[None]:
             app.logger.warning("SSL verification is disabled. This is insecure!")
 
     app.state.httpx_client = AsyncClient(timeout=HTTPX_TIMEOUT, verify=verify)
+
+    if JMESPATH_EXPRESSION:
+        try:
+            jmespath.compile(JMESPATH_EXPRESSION)
+            if app.logger:
+                app.logger.info(
+                    f"Successfully compiled JMESPATH_EXPRESSION: {JMESPATH_EXPRESSION}"
+                )
+        except ParseError as e:
+            error_msg = (
+                f"Invalid JMESPATH_EXPRESSION '{JMESPATH_EXPRESSION}': {str(e)}. "
+                "This expression will not be applied."
+            )
+            if app.logger:
+                app.logger.error(error_msg)
+            # Note: The application will still start, but the global expression
+            # will fail when applied. We log the error but don't exit.
+        except Exception as e:
+            error_msg = (
+                f"Unexpected error compiling JMESPATH_EXPRESSION '{JMESPATH_EXPRESSION}': {str(e)}. "
+                "This expression will not be applied."
+            )
+            if app.logger:
+                app.logger.error(error_msg)
+    else:
+        if app.logger:
+            app.logger.info("No JMESPATH_EXPRESSION environment variable set.")
+
     try:
         yield
     finally:
