@@ -63,6 +63,9 @@ STATIC_DIR = APP_DIR / "static"
 
 JMESPATH_EXPRESSION = os.environ.get("JMESPATH_EXPRESSION", default="")
 FORWARD_URL = os.environ.get("FORWARD_URL", default="")
+METRICS_ANNOTATION_EXPRESSION = os.environ.get(
+    "METRICS_ANNOTATION_EXPRESSION", default=""
+)
 
 
 # Default timeout in seconds for httpx requests
@@ -76,11 +79,61 @@ VERIFY_SSL = os.environ.get("VERIFY_SSL", "true").lower() != "false"
 FORWARD_BASIC_AUTH_USERNAME = os.environ.get("FORWARD_BASIC_AUTH_USERNAME", default="")
 FORWARD_BASIC_AUTH_PASSWORD = os.environ.get("FORWARD_BASIC_AUTH_PASSWORD", default="")
 
+
 # --- Define custom Prometheus metrics ---
+def extract_labelnames(expression: str) -> list[str]:
+    """Extract label names from a JMESPath expression.
+
+    This function extracts the label names from a multi_select_dict JMESPath expression.
+    For example, from the expression '{foo: a, bar: b}', it extracts ['foo', 'bar'].
+
+    Args:
+        expression: The JMESPath expression to analyze
+
+    Returns:
+        List of label names extracted from the expression
+    """
+    if not expression:
+        return []
+
+    try:
+        # Compile the expression to get its parsed structure
+        parsed = jmespath.compile(expression).parsed
+
+        # Only multi_select_dict expressions are valid for label extraction
+        if parsed.get("type") != "multi_select_dict":
+            logger.warning(
+                "Metrics annotation expression is not a multi_select_dict",
+                expression=expression,
+            )
+            return []
+
+        # Extract the label names from the key_val_pair children
+        label_names = []
+        for child in parsed.get("children", []):
+            if child.get("type") == "key_val_pair":
+                label_names.append(child.get("value"))
+
+        logger.info("Extracted label names", label_names=label_names)
+        return label_names
+    except Exception as e:
+        logger.error(
+            "Error extracting label names from expression",
+            error=str(e),
+            expression=expression,
+        )
+        return []
+
+
+# Extract label names from the metrics annotation expression
+metric_label_names = extract_labelnames(METRICS_ANNOTATION_EXPRESSION)
 
 # Counter for total successful forwarding requests
+# Will be dynamically labeled based on METRICS_ANNOTATION_EXPRESSION if provided
 metrics_forwarded_total = Counter(
-    "jmespath_proxy_forwarded_total", "Total number of messages successfully forwarded."
+    "jmespath_proxy_forwarded_total",
+    "Total number of messages successfully forwarded.",
+    metric_label_names if metric_label_names else (),
 )
 
 # Counter for forwarding errors
@@ -153,6 +206,52 @@ def apply_jmespath_expression(
         return body_data, error_msg
 
 
+def extract_metric_labels(
+    expression: str,
+    body_data: dict[str, Any],
+    query_params: dict[str, Any],
+) -> dict[str, str]:
+    """Extract metric labels using a JMESPath expression.
+
+    Args:
+        expression: The JMESPath expression to apply
+        body_data: The body data to extract labels from
+        query_params: Query parameters to include in context
+
+    Returns:
+        Dictionary of label names and values for metrics
+    """
+    # Skip processing if no expression is provided
+    if not expression:
+        return {}
+
+    # Create a combined context for JMESPath evaluation
+    context_data = {"body": body_data, "query_params": query_params}
+
+    try:
+        logger.info("Extracting metric labels", expression=expression)
+        result = jmespath.search(expression, context_data)
+
+        # Ensure result is a dictionary with string values
+        if not isinstance(result, dict):
+            logger.warning(
+                "Metrics annotation expression did not return a dictionary",
+                result=result,
+                expression=expression,
+            )
+            return {}
+
+        # Convert all values to strings for Prometheus labels
+        labels = {k: str(v) for k, v in result.items() if v is not None}
+        logger.info("Extracted metric labels", labels=labels)
+        return labels
+    except Exception as e:
+        logger.error(
+            "Error extracting metric labels", error=str(e), expression=expression
+        )
+        return {}
+
+
 @asynccontextmanager
 async def httpx_lifespan(app: Litestar) -> AsyncGenerator[None]:
     """Lifespan context manager for httpx client.
@@ -182,29 +281,34 @@ async def httpx_lifespan(app: Litestar) -> AsyncGenerator[None]:
 
     app.state.httpx_client = AsyncClient(timeout=HTTPX_TIMEOUT, verify=verify)
 
-    if JMESPATH_EXPRESSION:
-        try:
-            jmespath.compile(JMESPATH_EXPRESSION)
-            logger.info(
-                "Successfully compiled JMESPATH_EXPRESSION",
-                expression=JMESPATH_EXPRESSION,
-            )
-        except ParseError as e:
-            logger.error(
-                "Invalid JMESPATH_EXPRESSION",
-                error=str(e),
-                expression=JMESPATH_EXPRESSION,
-            )
-            # Note: The application will still start, but the global expression
-            # will fail when applied. We log the error but don't exit.
-        except Exception as e:
-            logger.error(
-                "Unexpected error compiling JMESPATH_EXPRESSION",
-                error=str(e),
-                expression=JMESPATH_EXPRESSION,
-            )
-    else:
-        logger.info("No JMESPATH_EXPRESSION environment variable set.")
+    # Validate JMESPath expressions
+    for expr_name, expr_value in [
+        ("JMESPATH_EXPRESSION", JMESPATH_EXPRESSION),
+        ("METRICS_ANNOTATION_EXPRESSION", METRICS_ANNOTATION_EXPRESSION),
+    ]:
+        if expr_value:
+            try:
+                jmespath.compile(expr_value)
+                logger.info(
+                    f"Successfully compiled {expr_name}",
+                    expression=expr_value,
+                )
+            except ParseError as e:
+                logger.error(
+                    f"Invalid {expr_name}",
+                    error=str(e),
+                    expression=expr_value,
+                )
+                # Note: The application will still start, but the expression
+                # will fail when applied. We log the error but don't exit.
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error compiling {expr_name}",
+                    error=str(e),
+                    expression=expr_value,
+                )
+        else:
+            logger.info(f"No {expr_name} environment variable set.")
 
     try:
         yield
@@ -236,6 +340,11 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
     # Apply JMESPath transformation if configured
     result, error = apply_jmespath_expression(
         JMESPATH_EXPRESSION, data, query_params_dict
+    )
+
+    # Extract metric labels if configured
+    metric_labels = extract_metric_labels(
+        METRICS_ANNOTATION_EXPRESSION, data, query_params_dict
     )
 
     # Return error response if transformation failed
@@ -328,35 +437,22 @@ async def forward_json(data: dict[str, Any], request: Request) -> Any:
                 status_code=response.status_code,
             )
 
-            # Increment the successful forwarding metric
-            metrics_forwarded_total.inc()
-
-        # Get the content type from the response
-        content_type = response.headers.get("content-type", "")
-
-        # If the response is JSON, parse it and return the Python object
-        if "application/json" in content_type:
-            try:
-                content = await response.json()
-            except Exception as json_error:
-                # Handle cases where upstream sends non-parseable JSON
-                logger.warning(
-                    "Failed to parse upstream JSON",
-                    error=str(json_error),
-                    url=FORWARD_URL,
-                    status_code=response.status_code,
-                )
-                content = response.content
-        else:
-            # For non-JSON responses, use the raw content
-            content = response.content
+            # Increment the successful forwarding metric with any extracted labels
+            if metric_label_names:
+                # When we have label names from the expression, use the extracted values
+                label_values = [
+                    metric_labels.get(name, "") for name in metric_label_names
+                ]
+                metrics_forwarded_total.labels(*label_values).inc()
+            else:
+                # Fallback without labels
+                metrics_forwarded_total.inc()
 
         # Return the response with the appropriate content and headers
         return Response(
-            content=content,
+            content=response.content,
             status_code=response.status_code,
-            media_type=content_type,
-            headers=dict(response.headers),
+            headers=response.headers,
         )
 
 

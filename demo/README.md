@@ -45,3 +45,11 @@ This directory contains a Docker Compose setup to demonstrate the JMESPath Proxy
 - `body[?labels.severity=='warning']`: Only forward warning alerts
 - `body[*].{name: labels.alertname, severity: labels.severity}`: Extract only name and severity
 - `body[*].{alert: labels.alertname, summary: annotations.summary, description: annotations.description}`: Format alerts with key information
+
+## Metrics Annotation Expressions
+
+The `METRICS_ANNOTATION_EXPRESSION` environment variable allows you to add custom labels to metrics based on the request content:
+
+- `{"source": "body[0].labels.alertname || 'unknown'"}`: Add a "source" label with the name of the first alert
+- `{"severity": "body[0].labels.severity || 'unknown'", "status": "body[0].status || 'unknown'"}`: Add severity and status labels
+- `{"count": "length(body)"}`: Add a count of the number of alerts in the request

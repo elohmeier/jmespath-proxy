@@ -38,6 +38,7 @@ services:
     environment:
       - FORWARD_URL=http://echo-service:8080/alerts
       - JMESPATH_EXPRESSION=body
+      - "METRICS_ANNOTATION_EXPRESSION={\"alert_name\": body.alerts[0].labels.alertname || 'unknown', \"status\": body.status || 'unknown'}"
     depends_on:
       - alertmanager
       - echo-service
