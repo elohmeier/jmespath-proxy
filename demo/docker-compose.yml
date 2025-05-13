@@ -1,0 +1,66 @@
+version: "3.8"
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus:/etc/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager:/etc/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    restart: unless-stopped
+
+  jmespath-proxy:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: jmespath-proxy
+    ports:
+      - "8000:8000"
+    environment:
+      - FORWARD_URL=http://echo-service:8080/alerts
+      - JMESPATH_EXPRESSION=body
+    depends_on:
+      - alertmanager
+      - echo-service
+    restart: unless-stopped
+
+  # This service generates flapping metrics for demonstration
+  flapper:
+    image: prom/node-exporter:latest
+    container_name: flapper
+    command:
+      - "--collector.textfile.directory=/textfile_collector"
+    volumes:
+      - ./flapper:/textfile_collector
+    ports:
+      - "9100:9100"
+    restart: unless-stopped
+
+  # Echo service to receive and print alerts from JMESPath proxy
+  echo-service:
+    image: mendhak/http-https-echo:latest
+    container_name: echo-service
+    ports:
+      - "8080:8080"
+    environment:
+      - HTTP_PORT=8080
+    restart: unless-stopped

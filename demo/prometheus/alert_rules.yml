@@ -1,0 +1,22 @@
+groups:
+  - name: flapping-alerts
+    rules:
+      - alert: FlappingMetric
+        expr: up{job="flapper"} == 1
+        for: 10s
+        labels:
+          severity: warning
+          source: "demo"
+        annotations:
+          summary: "Flapping metric detected"
+          description: "This is a test alert that will flap based on the flapper service"
+
+      - alert: AlwaysFiring
+        expr: vector(1)
+        for: 10s
+        labels:
+          severity: info
+          source: "demo"
+        annotations:
+          summary: "Always firing alert"
+          description: "This alert is always firing to demonstrate JMESPath proxy"

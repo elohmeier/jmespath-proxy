@@ -1,0 +1,3 @@
+# This file will be read by node-exporter's textfile collector
+# The flapper service will use this to generate metrics that will trigger alerts
+flapping_metric 1
