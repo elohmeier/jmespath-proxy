@@ -16,7 +16,11 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
 
 - `JMESPATH_EXPRESSION`: Default JMESPath expression to apply to incoming JSON data.
 - `FORWARD_URL`: URL to which the transformed JSON payload will be forwarded.
+- `METRICS_ANNOTATION_EXPRESSION`: JMESPath expression to extract labels for Prometheus metrics.
 - `HTTPX_TIMEOUT`: Timeout setting for `httpx` requests (default is 30 seconds).
+- `VERIFY_SSL`: Enable or disable SSL verification (default is `true`).
+- `FORWARD_BASIC_AUTH_USERNAME`: Username for basic auth when forwarding requests (optional).
+- `FORWARD_BASIC_AUTH_PASSWORD`: Password for basic auth when forwarding requests (optional).
 - `HOST`: Host for the server to bind to (default is `127.0.0.1`).
 - `PORT`: Port for the server to listen on (default is `8000`).
 - `APP_RELOAD`: Enable or disable auto-reload (useful for development; defaults to `false`).
@@ -39,7 +43,7 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
 
 - **Method**: GET
 - **Description**: Prometheus metrics endpoint that exposes application metrics in Prometheus format.
-- **Metrics**: Includes request counts, response times, status codes, and other standard HTTP metrics.
+- **Metrics**: Includes request counts, response times, status codes, and other standard HTTP metrics. Also includes custom metrics for tracking forwarded requests and errors.
 
 ### `/test`
 
@@ -108,6 +112,37 @@ Welcome to the JMESPath Proxy Application! This project provides an API service 
   ```bash
   pytest tests/
   ```
+
+## Prometheus Metrics
+
+### Default Litestar Metrics
+
+The application includes the standard Litestar Prometheus metrics, which track:
+
+- `litestar_requests_total`: Counter for the total number of HTTP requests, labeled by method, path, and status code.
+- `litestar_requests_duration_seconds`: Histogram for the duration of HTTP requests in seconds.
+- `litestar_requests_in_progress`: Gauge for the number of HTTP requests currently being processed.
+- `litestar_responses_total`: Counter for the total number of HTTP responses, labeled by status code.
+
+These metrics are automatically exposed at the `/metrics` endpoint in Prometheus format.
+
+### Custom Prometheus Metrics
+
+The application also provides the following custom metrics:
+
+- `jmespath_proxy_forwarded_total`: Counter for the total number of messages successfully forwarded. Can be labeled using the `METRICS_ANNOTATION_EXPRESSION`.
+- `jmespath_proxy_forward_errors_total`: Counter for errors encountered during forwarding, labeled by error type.
+- `jmespath_proxy_forward_duration_seconds`: Histogram for the duration of forwarded HTTP requests in seconds.
+
+### Using Metrics Annotation Expression
+
+The `METRICS_ANNOTATION_EXPRESSION` allows you to add custom labels to the `jmespath_proxy_forwarded_total` metric based on the request content:
+
+```
+export METRICS_ANNOTATION_EXPRESSION='{alert_name: body.alerts[0].labels.alertname || "unknown", status: body.status || "unknown"}'
+```
+
+This would add `alert_name` and `status` labels to the metric, making it possible to filter and group metrics by these dimensions in Prometheus.
 
 ## Contributing
 
