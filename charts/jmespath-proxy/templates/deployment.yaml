@@ -68,6 +68,17 @@ spec:
               value: {{ .Values.forwardUrl.value | quote }}
               {{- end }}
 
+            # METRICS_ANNOTATION_EXPRESSION configuration
+            - name: METRICS_ANNOTATION_EXPRESSION
+              {{- if .Values.metricsAnnotationExpression.fromConfigMap.enabled }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ if .Values.metricsAnnotationExpression.fromConfigMap.useExisting }}{{ .Values.metricsAnnotationExpression.fromConfigMap.name }}{{- else }}{{ include "jmespath-proxy.fullname" . }}-config{{- end }}
+                  key: {{ .Values.metricsAnnotationExpression.fromConfigMap.key | default "metrics-annotation-expression" }}
+              {{- else }}
+              value: {{ .Values.metricsAnnotationExpression.value | quote }}
+              {{- end }}
+
             # Other environment variables
             {{- if .Values.env.HTTPX_TIMEOUT }}
             - name: HTTPX_TIMEOUT

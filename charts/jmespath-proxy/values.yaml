@@ -45,6 +45,19 @@ jmespathExpression:
     name: "" # Name of the ConfigMap (required if enabled)
     key: "jmespath-expression" # Key in the ConfigMap
 
+# Configuration for the Metrics Annotation Expression
+metricsAnnotationExpression:
+  # Direct value for the Metrics Annotation Expression (used if no other source is enabled)
+  # This expression extracts labels for the jmespath_proxy_forwarded_total metric
+  # Must be a multi_select_dict expression like '{label1: path.to.value1, label2: path.to.value2}'
+  value: ""
+  # Source the Metrics Annotation Expression from a ConfigMap
+  fromConfigMap:
+    enabled: false
+    useExisting: false # Set to true to use an existing ConfigMap
+    name: "" # Name of the ConfigMap (required if enabled)
+    key: "metrics-annotation-expression" # Key in the ConfigMap
+
 # Configuration for the Forward URL
 forwardUrl:
   # Direct value for the Forward URL (used if no other source is enabled)
